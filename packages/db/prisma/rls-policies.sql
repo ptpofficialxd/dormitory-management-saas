@@ -104,6 +104,78 @@ CREATE POLICY tenant_isolation ON audit_log
   USING (app_rls_bypass() OR company_id = app_current_company_id())
   WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
 
+-- ==== tenant =============================================================
+ALTER TABLE tenant ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON tenant;
+CREATE POLICY tenant_isolation ON tenant
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== contract ===========================================================
+ALTER TABLE contract ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contract FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON contract;
+CREATE POLICY tenant_isolation ON contract
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== meter ==============================================================
+ALTER TABLE meter ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meter FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON meter;
+CREATE POLICY tenant_isolation ON meter
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== reading ============================================================
+ALTER TABLE reading ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reading FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON reading;
+CREATE POLICY tenant_isolation ON reading
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== invoice ============================================================
+ALTER TABLE invoice ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON invoice;
+CREATE POLICY tenant_isolation ON invoice
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== invoice_item =======================================================
+ALTER TABLE invoice_item ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoice_item FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON invoice_item;
+CREATE POLICY tenant_isolation ON invoice_item
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== payment ============================================================
+ALTER TABLE payment ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON payment;
+CREATE POLICY tenant_isolation ON payment
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
+-- ==== slip ===============================================================
+ALTER TABLE slip ENABLE ROW LEVEL SECURITY;
+ALTER TABLE slip FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON slip;
+CREATE POLICY tenant_isolation ON slip
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
 -- -------------------------------------------------------------------------
 -- Append-only enforcement for audit_log (CLAUDE.md §3.7).
 -- UPDATE / DELETE are denied even by the bypass role.

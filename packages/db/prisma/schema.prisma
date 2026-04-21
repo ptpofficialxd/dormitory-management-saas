@@ -53,6 +53,69 @@ enum UnitStatus {
   @@map("unit_status")
 }
 
+enum TenantStatus {
+  active
+  moved_out
+  blocked
+
+  @@map("tenant_status")
+}
+
+enum ContractStatus {
+  draft
+  active
+  ended
+  terminated
+
+  @@map("contract_status")
+}
+
+enum MeterKind {
+  water
+  electric
+
+  @@map("meter_kind")
+}
+
+enum InvoiceStatus {
+  draft
+  issued
+  partially_paid
+  paid
+  void
+  overdue
+
+  @@map("invoice_status")
+}
+
+enum InvoiceItemKind {
+  rent
+  water
+  electric
+  common_fee
+  late_fee
+  deposit
+  other
+
+  @@map("invoice_item_kind")
+}
+
+enum PaymentMethod {
+  promptpay
+  cash
+  bank_transfer
+
+  @@map("payment_method")
+}
+
+enum PaymentStatus {
+  pending
+  confirmed
+  rejected
+
+  @@map("payment_status")
+}
+
 // =========================================================================
 // Company — tenant root (every other tenant-owned row references this id)
 // =========================================================================
@@ -70,6 +133,14 @@ model Company {
   properties      Property[]
   units           Unit[]
   auditLogs       AuditLog[]
+  tenants         Tenant[]
+  contracts       Contract[]
+  meters          Meter[]
+  readings        Reading[]
+  invoices        Invoice[]
+  invoiceItems    InvoiceItem[]
+  payments        Payment[]
+  slips           Slip[]
 
   @@index([status])
   @@map("company")
@@ -91,9 +162,11 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  company         Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  roleAssignments RoleAssignment[]
-  auditLogs       AuditLog[]       @relation("AuditLogActor")
+  company            Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  roleAssignments    RoleAssignment[]
+  auditLogs          AuditLog[]       @relation("AuditLogActor")
+  readingsTakenBy    Reading[]        @relation("ReadingTakenBy")
+  paymentsConfirmed  Payment[]        @relation("PaymentConfirmer")
 
   // Email uniqueness scoped to company — same email may register at multiple dorms.
   @@unique([companyId, email])
@@ -160,8 +233,11 @@ model Unit {
   createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  property  Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  contracts Contract[]
+  meters    Meter[]
+  invoices  Invoice[]
 
   @@unique([propertyId, unitNumber])
   @@index([companyId])
@@ -193,4 +269,260 @@ model AuditLog {
   @@index([companyId, createdAt(sort: Desc)])
   @@index([resource, resourceId])
   @@map("audit_log")
+}
+
+// =========================================================================
+// Tenant — LINE LIFF user. Separate from `user` (admin/staff path) because
+// authentication + identity model differs (LINE Login vs email/password).
+// PII fields (nationalId, phone) stored encrypted at-rest via pgcrypto —
+// encryption happens in the service layer before INSERT (CLAUDE.md §3.8).
+// =========================================================================
+
+model Tenant {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId   String       @map("company_id") @db.Uuid
+  lineUserId  String       @map("line_user_id") @db.VarChar(64)
+  displayName String       @map("display_name") @db.VarChar(128)
+  pictureUrl  String?      @map("picture_url") @db.VarChar(512)
+  // Encrypted at rest (pgcrypto). Stored as VARCHAR of base64-encoded ciphertext.
+  nationalId  String?      @map("national_id") @db.VarChar(512)
+  phone       String?      @db.VarChar(512)
+  status      TenantStatus @default(active)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  contracts Contract[]
+  invoices  Invoice[]
+  payments  Payment[]
+
+  // One tenant record per (company, LINE userId). Same LINE user may be a
+  // tenant at multiple dorms — each gets a separate row.
+  @@unique([companyId, lineUserId])
+  @@index([companyId])
+  @@index([status])
+  @@map("tenant")
+}
+
+// =========================================================================
+// Contract — rental contract. Rent/deposit snapshot at signing time; if the
+// owner raises the unit's base rent, existing contracts stay at the old rate
+// until renewed.
+// =========================================================================
+
+model Contract {
+  id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId     String         @map("company_id") @db.Uuid
+  unitId        String         @map("unit_id") @db.Uuid
+  tenantId      String         @map("tenant_id") @db.Uuid
+  // ISO date (no time component). Contracts start/end at midnight Asia/Bangkok.
+  startDate     DateTime       @map("start_date") @db.Date
+  // NULL = open-ended monthly contract. Most Thai dorm contracts are month-to-month.
+  endDate       DateTime?      @map("end_date") @db.Date
+  rentAmount    Decimal        @map("rent_amount") @db.Decimal(10, 2)
+  depositAmount Decimal        @map("deposit_amount") @db.Decimal(10, 2)
+  status        ContractStatus @default(draft)
+  notes         String?        @db.VarChar(1024)
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  unit     Unit      @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  invoices Invoice[]
+
+  @@index([companyId])
+  @@index([unitId, status])
+  @@index([tenantId, status])
+  @@index([status, startDate])
+  @@map("contract")
+}
+
+// =========================================================================
+// Meter — one water + one electric meter per unit (enforced by unique index).
+// `ratePerUnit` uses Decimal(10,4) because Thai electric tariffs are quoted
+// to 4 decimals (e.g. 5.8124 THB/kWh under PEA's progressive tariff).
+// =========================================================================
+
+model Meter {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId     String    @map("company_id") @db.Uuid
+  unitId        String    @map("unit_id") @db.Uuid
+  kind          MeterKind
+  serialNo      String?   @map("serial_no") @db.VarChar(64)
+  unitOfMeasure String    @map("unit_of_measure") @db.VarChar(16)
+  ratePerUnit   Decimal   @map("rate_per_unit") @db.Decimal(10, 4)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  unit     Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  readings Reading[]
+
+  @@unique([unitId, kind])
+  @@index([companyId])
+  @@map("meter")
+}
+
+// =========================================================================
+// Reading — monthly meter reading. `consumption` is derived (current minus
+// previous) but stored for audit — recomputing from history would drift if
+// a past reading gets corrected.
+// =========================================================================
+
+model Reading {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  meterId       String   @map("meter_id") @db.Uuid
+  period        String   @db.VarChar(7)
+  valueCurrent  Decimal  @map("value_current") @db.Decimal(12, 2)
+  valuePrevious Decimal  @map("value_previous") @db.Decimal(12, 2)
+  consumption   Decimal  @db.Decimal(12, 2)
+  // R2 object key (private bucket). Signed URL generated on read.
+  photoKey      String?  @map("photo_key") @db.VarChar(512)
+  readAt        DateTime @map("read_at") @db.Timestamptz(6)
+  readByUserId  String?  @map("read_by_user_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  meter        Meter         @relation(fields: [meterId], references: [id], onDelete: Cascade)
+  readBy       User?         @relation("ReadingTakenBy", fields: [readByUserId], references: [id], onDelete: SetNull)
+  invoiceItems InvoiceItem[]
+
+  // One reading per meter per billing period.
+  @@unique([meterId, period])
+  @@index([companyId])
+  @@index([period])
+  @@map("reading")
+}
+
+// =========================================================================
+// Invoice — monthly bill for a contract. Totals computed by the service
+// using `money.add` (never JS +). One invoice per contract per period.
+// =========================================================================
+
+model Invoice {
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId    String        @map("company_id") @db.Uuid
+  contractId   String        @map("contract_id") @db.Uuid
+  unitId       String        @map("unit_id") @db.Uuid
+  tenantId     String        @map("tenant_id") @db.Uuid
+  period       String        @db.VarChar(7)
+  issueDate    DateTime      @map("issue_date") @db.Timestamptz(6)
+  dueDate      DateTime      @map("due_date") @db.Timestamptz(6)
+  subtotal     Decimal       @db.Decimal(10, 2)
+  total        Decimal       @db.Decimal(10, 2)
+  status       InvoiceStatus @default(draft)
+  // PromptPay QR payload (string; generated by packages/shared/promptpay).
+  // Stored so we don't regenerate on every fetch + the QR stays stable even
+  // if the tenant's PromptPay ID changes mid-period.
+  promptPayRef String?       @map("promptpay_ref") @db.VarChar(512)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company  Company       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  contract Contract      @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  unit     Unit          @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  items    InvoiceItem[]
+  payments Payment[]
+
+  // Prevent accidental duplicate invoices for the same contract + month.
+  @@unique([contractId, period])
+  @@index([companyId])
+  @@index([tenantId, status])
+  @@index([status, dueDate])
+  @@map("invoice")
+}
+
+// =========================================================================
+// InvoiceItem — a single line on an invoice. `lineTotal = quantity * unitPrice`
+// computed by service layer using `money.mul` (ADR-0005, never JS *).
+// When `kind = water|electric`, `readingId` links back to the meter reading
+// so we can audit / recompute.
+// =========================================================================
+
+model InvoiceItem {
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId   String          @map("company_id") @db.Uuid
+  invoiceId   String          @map("invoice_id") @db.Uuid
+  kind        InvoiceItemKind
+  description String          @db.VarChar(255)
+  quantity    Decimal         @db.Decimal(12, 2)
+  // 4 decimals: rates like 5.8124 THB/kWh shouldn't round at the line-item level.
+  unitPrice   Decimal         @map("unit_price") @db.Decimal(10, 4)
+  lineTotal   Decimal         @map("line_total") @db.Decimal(10, 2)
+  readingId   String?         @map("reading_id") @db.Uuid
+  sortOrder   Int             @default(0) @map("sort_order")
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  invoice Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  reading Reading? @relation(fields: [readingId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([invoiceId, sortOrder])
+  @@map("invoice_item")
+}
+
+// =========================================================================
+// Payment — a single payment attempt against an invoice. An invoice may
+// have multiple payments (partial payments). `idempotencyKey` is scoped
+// per-company so two tenants can reuse the same client-chosen key.
+// =========================================================================
+
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId         String        @map("company_id") @db.Uuid
+  invoiceId         String        @map("invoice_id") @db.Uuid
+  tenantId          String        @map("tenant_id") @db.Uuid
+  amount            Decimal       @db.Decimal(10, 2)
+  method            PaymentMethod @default(promptpay)
+  status            PaymentStatus @default(pending)
+  paidAt            DateTime?     @map("paid_at") @db.Timestamptz(6)
+  confirmedAt       DateTime?     @map("confirmed_at") @db.Timestamptz(6)
+  confirmedByUserId String?       @map("confirmed_by_user_id") @db.Uuid
+  rejectionReason   String?       @map("rejection_reason") @db.VarChar(512)
+  // Idempotency-Key header per CLAUDE.md §3.10 — client-chosen ULID/UUID.
+  idempotencyKey    String        @map("idempotency_key") @db.VarChar(128)
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company     Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  confirmedBy User?   @relation("PaymentConfirmer", fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+  slip        Slip?
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId])
+  @@index([invoiceId, status])
+  @@index([tenantId, status])
+  @@map("payment")
+}
+
+// =========================================================================
+// Slip — payment proof image (uploaded by tenant). Exactly one slip per
+// payment. Stored in R2 private bucket; `sha256` is indexed so we can flag
+// slip reuse across payments (tenant trying to pay two invoices with the
+// same receipt).
+// =========================================================================
+
+model Slip {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  paymentId   String   @unique @map("payment_id") @db.Uuid
+  r2ObjectKey String   @map("r2_object_key") @db.VarChar(512)
+  mimeType    String   @map("mime_type") @db.VarChar(64)
+  sizeBytes   Int      @map("size_bytes")
+  // Hex-encoded SHA-256 of the raw bytes — 64 chars. Used for dedupe + fraud check.
+  sha256      String   @db.Char(64)
+  uploadedAt  DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([sha256])
+  @@map("slip")
 }

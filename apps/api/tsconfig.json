@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
+    "paths": {
+      "@dorm/db": ["../../packages/db/src/index.ts"],
+      "@dorm/db/*": ["../../packages/db/src/*"],
+      "@dorm/shared": ["../../packages/shared/src/index.ts"],
+      "@dorm/shared/*": ["../../packages/shared/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "vitest.e2e.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

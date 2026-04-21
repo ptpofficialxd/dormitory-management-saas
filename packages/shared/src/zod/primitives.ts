@@ -40,10 +40,38 @@ export const moneySchema = z
   .regex(/^-?\d{1,8}(?:\.\d{1,2})?$/, 'Invalid money format (e.g. "5500.00")')
   .refine((s) => s !== '-0' && s !== '-0.00', 'Negative zero is not allowed');
 
+/**
+ * Rate — Decimal(10,4). Used for `meter.ratePerUnit` and `invoice_item.unitPrice`.
+ * Thai electric tariffs quote 4 decimals (e.g. 5.8124 THB/kWh under PEA).
+ * Max 6 integer digits + 4 decimals.
+ */
+export const rateSchema = z
+  .string()
+  .regex(/^-?\d{1,6}(?:\.\d{1,4})?$/, 'Invalid rate format (e.g. "5.8124")')
+  .refine((s) => s !== '-0' && !/^-0\.0+$/.test(s), 'Negative zero is not allowed');
+
+/**
+ * Meter value — Decimal(12,2). Used for meter readings + invoice item quantities.
+ * Must accommodate running meter totals (which can grow past 10 digits).
+ */
+export const meterValueSchema = z
+  .string()
+  .regex(/^-?\d{1,10}(?:\.\d{1,2})?$/, 'Invalid meter value format (e.g. "1234.56")')
+  .refine((s) => s !== '-0' && s !== '-0.00', 'Negative zero is not allowed');
+
 /** ISO 8601 UTC timestamp with `Z` suffix. */
 export const isoUtcSchema = z
   .string()
   .datetime({ offset: false, message: 'Expected ISO 8601 UTC (ends with Z)' });
+
+/**
+ * ISO 8601 calendar date `YYYY-MM-DD` — no time component. Matches Prisma
+ * `@db.Date`. Used for contract start/end + any date-only field.
+ * Does NOT validate calendar correctness (e.g. Feb 30) — Postgres will reject.
+ */
+export const isoDateSchema = z
+  .string()
+  .regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, 'Expected ISO date (YYYY-MM-DD)');
 
 /**
  * Thai national ID — 13 digits. Does NOT verify the checksum here; too much
