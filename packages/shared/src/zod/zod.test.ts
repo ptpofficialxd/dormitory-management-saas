@@ -1,18 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
+  announcementAudienceSchema,
+  announcementStatusSchema,
+  auditLogSchema,
   companyStatusSchema,
   contractStatusSchema,
+  createAnnouncementInputSchema,
   createCompanyInputSchema,
   createContractInputSchema,
   createInvoiceInputSchema,
+  createMaintenanceRequestInputSchema,
   createMeterInputSchema,
   createPaymentInputSchema,
   createReadingInputSchema,
   createTenantInputSchema,
   createUnitInputSchema,
   invoiceItemKindSchema,
+  lineWebhookPayloadSchema,
+  listAuditLogsInputSchema,
   loginAdminInputSchema,
   loginLiffInputSchema,
+  maintenanceCategorySchema,
+  maintenancePrioritySchema,
+  maintenanceStatusSchema,
   meterKindSchema,
   meterValueSchema,
   moneySchema,
@@ -23,8 +33,10 @@ import {
   slugSchema,
   tenantStatusSchema,
   unitStatusSchema,
+  updateMaintenanceRequestInputSchema,
   uploadSlipInputSchema,
   uuidSchema,
+  writeAuditLogInputSchema,
 } from './index.js';
 
 const UUID_A = '550e8400-e29b-41d4-a716-446655440000';
@@ -533,5 +545,269 @@ describe('loginLiffInputSchema', () => {
   });
 });
 
-// Silence "unused" — UUID_C is reserved for future tests. Keep import stable.
+// =========================================================================
+// P1 — audit-log / maintenance / announcement / webhook-line
+// =========================================================================
+
+describe('auditLogSchema', () => {
+  const valid = {
+    id: UUID_A,
+    companyId: UUID_B,
+    actorUserId: UUID_C,
+    action: 'POST /c/acme/payments',
+    resource: 'payment',
+    resourceId: '550e8400-e29b-41d4-a716-446655440099',
+    metadata: { invoiceId: UUID_A, amount: '5500.00' },
+    ipAddress: '203.0.113.42',
+    userAgent: 'Mozilla/5.0 …',
+    createdAt: '2026-04-22T10:00:00Z',
+  };
+
+  it('accepts a fully-populated row', () => {
+    expect(auditLogSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts null actorUserId (system-originated event)', () => {
+    expect(auditLogSchema.safeParse({ ...valid, actorUserId: null }).success).toBe(true);
+  });
+
+  it('accepts IPv6 in ipAddress column', () => {
+    expect(auditLogSchema.safeParse({ ...valid, ipAddress: '2001:db8::1' }).success).toBe(true);
+  });
+
+  it('rejects action longer than 64 chars (Prisma VarChar(64))', () => {
+    expect(auditLogSchema.safeParse({ ...valid, action: 'x'.repeat(65) }).success).toBe(false);
+  });
+});
+
+describe('writeAuditLogInputSchema', () => {
+  it('accepts minimum action + resource', () => {
+    expect(
+      writeAuditLogInputSchema.safeParse({
+        action: 'payment.confirm',
+        resource: 'payment',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects empty action', () => {
+    expect(writeAuditLogInputSchema.safeParse({ action: '', resource: 'payment' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('listAuditLogsInputSchema', () => {
+  it('defaults limit to 20 when omitted', () => {
+    const parsed = listAuditLogsInputSchema.parse({});
+    expect(parsed.limit).toBe(20);
+  });
+
+  it('rejects limit above 100', () => {
+    expect(listAuditLogsInputSchema.safeParse({ limit: 101 }).success).toBe(false);
+  });
+});
+
+describe('maintenance — enum drift canaries', () => {
+  it('status includes cancelled', () => {
+    expect(maintenanceStatusSchema.safeParse('cancelled').success).toBe(true);
+    expect(maintenanceStatusSchema.safeParse('deleted').success).toBe(false);
+  });
+
+  it('priority = low|normal|high|urgent', () => {
+    expect(maintenancePrioritySchema.safeParse('urgent').success).toBe(true);
+    expect(maintenancePrioritySchema.safeParse('critical').success).toBe(false);
+  });
+
+  it('category covers internet + other', () => {
+    expect(maintenanceCategorySchema.safeParse('internet').success).toBe(true);
+    expect(maintenanceCategorySchema.safeParse('other').success).toBe(true);
+    expect(maintenanceCategorySchema.safeParse('mystery').success).toBe(false);
+  });
+});
+
+describe('createMaintenanceRequestInputSchema', () => {
+  it('accepts minimum tenant-facing payload (defaults priority=normal, photos=[])', () => {
+    const parsed = createMaintenanceRequestInputSchema.parse({
+      unitId: UUID_A,
+      category: 'plumbing',
+      title: 'ก๊อกน้ำรั่ว',
+      description: 'น้ำหยดตลอดคืนในห้องน้ำ',
+    });
+    expect(parsed.priority).toBe('normal');
+    expect(parsed.photoR2Keys).toEqual([]);
+  });
+
+  it('rejects > 10 photos (MAINTENANCE_PHOTO_MAX)', () => {
+    expect(
+      createMaintenanceRequestInputSchema.safeParse({
+        unitId: UUID_A,
+        category: 'aircon',
+        title: 'แอร์ไม่เย็น',
+        description: 'เสียงดัง',
+        photoR2Keys: Array.from({ length: 11 }, (_, i) => `maint/${i}.jpg`),
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('updateMaintenanceRequestInputSchema', () => {
+  it('rejects empty patch (all fields undefined)', () => {
+    expect(updateMaintenanceRequestInputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('accepts assignedToUserId = null (explicit unassign)', () => {
+    expect(updateMaintenanceRequestInputSchema.safeParse({ assignedToUserId: null }).success).toBe(
+      true,
+    );
+  });
+});
+
+describe('announcement — enum drift canaries', () => {
+  it('status includes sending + cancelled', () => {
+    expect(announcementStatusSchema.safeParse('sending').success).toBe(true);
+    expect(announcementStatusSchema.safeParse('cancelled').success).toBe(true);
+    expect(announcementStatusSchema.safeParse('paused').success).toBe(false);
+  });
+
+  it('audience = all|property|floor|unit|tenant', () => {
+    expect(announcementAudienceSchema.safeParse('floor').success).toBe(true);
+    expect(announcementAudienceSchema.safeParse('everyone').success).toBe(false);
+  });
+});
+
+describe('createAnnouncementInputSchema — discriminated audience', () => {
+  it('accepts `all` target with no extra fields', () => {
+    expect(
+      createAnnouncementInputSchema.safeParse({
+        title: 'ประกาศ: ตัดน้ำประปา',
+        body: 'ตัดน้ำ 08:00–12:00 วันที่ 25/4',
+        target: { audience: 'all' },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects `property` target without propertyId', () => {
+    expect(
+      createAnnouncementInputSchema.safeParse({
+        title: 't',
+        body: 'b',
+        target: { audience: 'property' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts `floor` target with propertyId + floor', () => {
+    expect(
+      createAnnouncementInputSchema.safeParse({
+        title: 't',
+        body: 'b',
+        target: { audience: 'floor', propertyId: UUID_A, floor: 3 },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects `unit` target with empty unitIds', () => {
+    expect(
+      createAnnouncementInputSchema.safeParse({
+        title: 't',
+        body: 'b',
+        target: { audience: 'unit', unitIds: [] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects `tenant` target with >200 tenantIds', () => {
+    const tooMany = Array.from({ length: 201 }, () => UUID_A);
+    expect(
+      createAnnouncementInputSchema.safeParse({
+        title: 't',
+        body: 'b',
+        target: { audience: 'tenant', tenantIds: tooMany },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects body > 4000 chars (LINE headroom)', () => {
+    expect(
+      createAnnouncementInputSchema.safeParse({
+        title: 't',
+        body: 'x'.repeat(4001),
+        target: { audience: 'all' },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('lineWebhookPayloadSchema', () => {
+  it('accepts a text-message event from a 1:1 user chat', () => {
+    const payload = {
+      destination: 'Ucccccccccccccccccccccccccccccccc',
+      events: [
+        {
+          type: 'message',
+          timestamp: 1_745_234_567_890,
+          webhookEventId: 'evt_01ABCXYZ',
+          deliveryContext: { isRedelivery: false },
+          source: { type: 'user', userId: 'U1234567890abcdef1234567890abcdef' },
+          replyToken: `rtok_${'x'.repeat(20)}`,
+          message: { type: 'text', id: '000001', text: 'สวัสดีครับ' },
+        },
+      ],
+    };
+    expect(lineWebhookPayloadSchema.safeParse(payload).success).toBe(true);
+  });
+
+  it('accepts an empty events array (LINE console verify hit)', () => {
+    expect(lineWebhookPayloadSchema.safeParse({ destination: 'Udest', events: [] }).success).toBe(
+      true,
+    );
+  });
+
+  it('passthrough: tolerates unknown event type (forward-compat)', () => {
+    const payload = {
+      destination: 'Udest',
+      events: [
+        {
+          type: 'videoPlayComplete',
+          timestamp: 1_745_234_567_890,
+          source: { type: 'user', userId: 'U1' },
+          futureField: { foo: 'bar' },
+        },
+      ],
+    };
+    expect(lineWebhookPayloadSchema.safeParse(payload).success).toBe(true);
+  });
+
+  it('rejects events batch > 100 items', () => {
+    const fakeEvent = {
+      type: 'message',
+      timestamp: 1_745_234_567_890,
+      source: { type: 'user', userId: 'U1' },
+      replyToken: `rtok_${'x'.repeat(20)}`,
+      message: { type: 'text', id: '1', text: 'hi' },
+    };
+    const payload = {
+      destination: 'Udest',
+      events: Array.from({ length: 101 }, () => fakeEvent),
+    };
+    expect(lineWebhookPayloadSchema.safeParse(payload).success).toBe(false);
+  });
+
+  it('rejects non-numeric timestamp', () => {
+    const payload = {
+      destination: 'Udest',
+      events: [
+        {
+          type: 'follow',
+          timestamp: 'not-a-number',
+          source: { type: 'user', userId: 'U1' },
+        },
+      ],
+    };
+    expect(lineWebhookPayloadSchema.safeParse(payload).success).toBe(false);
+  });
+});
+
+// Silence "unused" — UUID_C now referenced in auditLog tests.
 void UUID_C;

@@ -15,6 +15,17 @@ import { defineConfig } from 'vitest/config';
  *   'getAllAndOverride')`. SWC with `decoratorMetadata: true` mirrors what
  *   `tsc --emitDecoratorMetadata` does, so the compiled test output matches
  *   what Nest sees in production.
+ *
+ * Why the `as any` cast below:
+ *   Bun's isolated install creates two content-hashed copies of `vite`
+ *   (peer dep of both `vitest` and `unplugin-swc`) — e.g.
+ *   `vite@5.4.21/` and `vite@5.4.21+<hash>/`. Their `PluginOption` types
+ *   are structurally identical but nominally distinct to tsc, which
+ *   surfaces as TS2769 ("Plugin<any> not assignable to PluginOption").
+ *   Vitest itself does NOT re-export `PluginOption`, and importing it from
+ *   either `vite` copy only picks one side of the duality. `as any` erases
+ *   the nominal identity entirely — runtime is unaffected because both
+ *   copies execute the same bundled code.
  */
 export default defineConfig({
   plugins: [
@@ -26,7 +37,7 @@ export default defineConfig({
         target: 'es2022',
       },
       sourceMaps: true,
-    }),
+    }) as any,
   ],
   test: {
     globals: false,

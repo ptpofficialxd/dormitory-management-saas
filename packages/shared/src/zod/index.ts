@@ -15,3 +15,7 @@ export * from './reading.js';
 export * from './invoice.js';
 export * from './payment.js';
 export * from './slip.js';
+export * from './audit-log.js';
+export * from './maintenance.js';
+export * from './announcement.js';
+export * from './webhook-line.js';
