@@ -40,6 +40,8 @@
     "db:reset:test": "bun run --filter @dorm/db db:reset:test",
     "db:setup": "bun run --filter @dorm/db db:setup",
     "db:test": "bun run --filter @dorm/db test",
+    "shared:test": "bun run --filter @dorm/shared test",
+    "shared:typecheck": "bun run --filter @dorm/shared typecheck",
     "check:bun-api": "node ./scripts/check-no-bun-api.mjs",
     "prepare": "echo 'skip husky for now'"
   },

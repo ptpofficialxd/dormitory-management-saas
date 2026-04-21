@@ -1,0 +1,64 @@
+{
+  "name": "@dorm/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Shared primitives: Zod schemas, RBAC, money (Decimal), date, PromptPay — used by api/web/liff",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./constants": {
+      "types": "./src/constants.ts",
+      "default": "./src/constants.ts"
+    },
+    "./money": {
+      "types": "./src/money.ts",
+      "default": "./src/money.ts"
+    },
+    "./date": {
+      "types": "./src/date.ts",
+      "default": "./src/date.ts"
+    },
+    "./rbac": {
+      "types": "./src/rbac/index.ts",
+      "default": "./src/rbac/index.ts"
+    },
+    "./promptpay": {
+      "types": "./src/promptpay.ts",
+      "default": "./src/promptpay.ts"
+    },
+    "./slug": {
+      "types": "./src/slug.ts",
+      "default": "./src/slug.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "default": "./src/errors.ts"
+    },
+    "./zod": {
+      "types": "./src/zod/index.ts",
+      "default": "./src/zod/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "vitest --run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "date-fns": "4.1.0",
+    "date-fns-tz": "3.2.0",
+    "decimal.js": "10.4.3",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  }
+}
