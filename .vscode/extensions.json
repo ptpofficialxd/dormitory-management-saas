@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "Prisma.prisma",
+    "bradlc.vscode-tailwindcss",
+    "ms-azuretools.vscode-docker",
+    "GitHub.vscode-pull-request-github",
+    "yoavbls.pretty-ts-errors",
+    "wix.vscode-import-cost"
+  ]
+}

@@ -1,0 +1,28 @@
+# Bun runtime + package manager config
+# Docs: https://bun.sh/docs/runtime/bunfig
+
+[install]
+# Pin exact versions (no ^ / ~) — deterministic installs for CI and solo dev
+exact = true
+
+# pnpm-style isolated node_modules — blocks phantom deps inside a monorepo.
+# Requires Bun >= 1.1.13.
+linker = "isolated"
+
+# Retry failed downloads from the registry — good for flaky Thai ISPs / mobile tethering
+registry = "https://registry.npmjs.org/"
+
+# Save the text lockfile on install
+[install.lockfile]
+save = true
+
+# Don't auto-install peer deps silently — force explicit dependency declaration
+[install.peer]
+missing = "warn"
+
+# Run Node-compatible shebangs (#!/usr/bin/env node) through Bun transparently
+[run]
+bun = true
+
+# Silence Bun's "auto-install" convenience — always require packages to be in package.json
+auto = "disable"

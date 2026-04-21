@@ -1,0 +1,44 @@
+{
+  "name": "@dorm/db",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Prisma schema + RLS-enforced client + seed for Dorm SaaS",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "generate": "dotenv -e ../../.env -- prisma generate",
+    "migrate:init": "dotenv -e ../../.env -- prisma migrate dev --name init",
+    "migrate:dev": "dotenv -e ../../.env -- prisma migrate dev",
+    "migrate:deploy": "dotenv -e ../../.env -- prisma migrate deploy",
+    "migrate:reset": "dotenv -e ../../.env -- prisma migrate reset --force",
+    "studio": "dotenv -e ../../.env -- prisma studio",
+    "apply-rls": "dotenv -e ../../.env -- bun run src/apply-rls.ts",
+    "seed": "dotenv -e ../../.env -- bun run src/seed.ts",
+    "db:setup": "bun run migrate:init && bun run apply-rls && bun run seed",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "test": "dotenv -e ../../.env.test -- vitest --run",
+    "test:watch": "dotenv -e ../../.env.test -- vitest"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "2.0.2",
+    "@prisma/client": "6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "dotenv-cli": "7.4.4",
+    "prisma": "6.1.0",
+    "typescript": "5.6.3",
+    "vitest": "2.1.8"
+  },
+  "prisma": {
+    "seed": "bun run src/seed.ts"
+  }
+}

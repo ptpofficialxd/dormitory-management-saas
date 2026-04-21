@@ -1,0 +1,196 @@
+// Dorm SaaS — Prisma schema (source of truth).
+// See CLAUDE.md §3 for non-negotiable rules.
+// See docs/adr/0002 for RLS strategy, 0005 for Decimal money.
+
+generator client {
+  provider        = "prisma-client-js"
+  engineType      = "library"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [pgcrypto]
+}
+
+// =========================================================================
+// Enums
+// =========================================================================
+
+enum CompanyStatus {
+  active
+  suspended
+  churned
+
+  @@map("company_status")
+}
+
+enum UserStatus {
+  active
+  disabled
+
+  @@map("user_status")
+}
+
+enum Role {
+  company_owner
+  property_manager
+  staff
+  tenant
+  guardian
+
+  @@map("role")
+}
+
+enum UnitStatus {
+  vacant
+  occupied
+  maintenance
+  reserved
+
+  @@map("unit_status")
+}
+
+// =========================================================================
+// Company — tenant root (every other tenant-owned row references this id)
+// =========================================================================
+
+model Company {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String        @unique @db.VarChar(32)
+  name      String        @db.VarChar(128)
+  status    CompanyStatus @default(active)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  users           User[]
+  roleAssignments RoleAssignment[]
+  properties      Property[]
+  units           Unit[]
+  auditLogs       AuditLog[]
+
+  @@index([status])
+  @@map("company")
+}
+
+// =========================================================================
+// User — admin/staff user (email/password login). Tenant users live in a
+// separate `tenant` table added in Step 3 (LIFF / LINE Login path).
+// =========================================================================
+
+model User {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId    String     @map("company_id") @db.Uuid
+  email        String     @db.VarChar(255)
+  passwordHash String     @map("password_hash") @db.VarChar(255)
+  displayName  String     @map("display_name") @db.VarChar(128)
+  status       UserStatus @default(active)
+  lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  roleAssignments RoleAssignment[]
+  auditLogs       AuditLog[]       @relation("AuditLogActor")
+
+  // Email uniqueness scoped to company — same email may register at multiple dorms.
+  @@unique([companyId, email])
+  @@index([companyId])
+  @@map("user")
+}
+
+// =========================================================================
+// RoleAssignment — RBAC table-driven (CLAUDE.md §3.13).
+// A user may hold multiple roles within the same company.
+// =========================================================================
+
+model RoleAssignment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      Role
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId, role])
+  @@index([companyId])
+  @@index([userId])
+  @@map("role_assignment")
+}
+
+// =========================================================================
+// Property — a building/site owned by a company
+// =========================================================================
+
+model Property {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  slug      String   @db.VarChar(64)
+  name      String   @db.VarChar(128)
+  address   String?  @db.VarChar(512)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  units   Unit[]
+
+  @@unique([companyId, slug])
+  @@index([companyId])
+  @@map("property")
+}
+
+// =========================================================================
+// Unit — a rentable room. Floor/UnitType normalization deferred to Step 3.
+// =========================================================================
+
+model Unit {
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId  String     @map("company_id") @db.Uuid
+  propertyId String     @map("property_id") @db.Uuid
+  unitNumber String     @map("unit_number") @db.VarChar(32)
+  floor      Int        @default(1)
+  status     UnitStatus @default(vacant)
+  baseRent   Decimal    @map("base_rent") @db.Decimal(10, 2)
+  sizeSqm    Decimal?   @map("size_sqm") @db.Decimal(6, 2)
+  notes      String?    @db.VarChar(512)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company  Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, unitNumber])
+  @@index([companyId])
+  @@index([propertyId])
+  @@index([status])
+  @@map("unit")
+}
+
+// =========================================================================
+// AuditLog — append-only (enforced by DB trigger in rls-policies.sql).
+// Required on every mutation touching PII or money (CLAUDE.md §3.7).
+// =========================================================================
+
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(64)
+  resource    String   @db.VarChar(64)
+  resourceId  String?  @map("resource_id") @db.VarChar(64)
+  metadata    Json     @default("{}")
+  ipAddress   String?  @map("ip_address") @db.Inet
+  userAgent   String?  @map("user_agent") @db.VarChar(512)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  actor   User?   @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, createdAt(sort: Desc)])
+  @@index([resource, resourceId])
+  @@map("audit_log")
+}

@@ -1,0 +1,53 @@
+{
+  "name": "dorm-saas",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Dormitory / Apartment Management SaaS (Thailand) — LINE OA + Admin Web + Backend API",
+  "packageManager": "bun@1.1.38",
+  "engines": {
+    "bun": ">=1.1.30",
+    "node": ">=20.11.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch --parallel",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "infra:reset": "docker compose down -v && docker compose up -d",
+    "db:generate": "bun run --filter @dorm/db generate",
+    "db:migrate:init": "bun run --filter @dorm/db migrate:init",
+    "db:migrate": "bun run --filter @dorm/db migrate:dev",
+    "db:migrate:reset": "bun run --filter @dorm/db migrate:reset",
+    "db:studio": "bun run --filter @dorm/db studio",
+    "db:apply-rls": "bun run --filter @dorm/db apply-rls",
+    "db:seed": "bun run --filter @dorm/db seed",
+    "db:setup": "bun run --filter @dorm/db db:setup",
+    "db:test": "bun run --filter @dorm/db test",
+    "check:bun-api": "node ./scripts/check-no-bun-api.mjs",
+    "prepare": "echo 'skip husky for now'"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/bun": "1.1.14",
+    "turbo": "2.3.3",
+    "typescript": "5.6.3"
+  },
+  "trustedDependencies": [
+    "@biomejs/biome",
+    "esbuild",
+    "prisma",
+    "@prisma/client",
+    "@prisma/engines"
+  ]
+}

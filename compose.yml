@@ -1,0 +1,50 @@
+# Local dev infra for Dorm SaaS.
+# Usage: docker compose up -d
+# Stop:  docker compose down
+# Reset: docker compose down -v   (drops volumes — also clears DB!)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dorm-postgres
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: dorm
+      POSTGRES_PASSWORD: dorm_dev_password
+      POSTGRES_DB: dorm_dev
+      # Thai locale support (tz only — actual locale comes from app)
+      TZ: Asia/Bangkok
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U dorm -d dorm_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    command:
+      - postgres
+      - -c
+      - log_statement=none
+      - -c
+      - log_min_duration_statement=500
+
+  redis:
+    image: redis:7-alpine
+    container_name: dorm-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
