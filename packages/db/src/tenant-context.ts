@@ -39,11 +39,34 @@ type Store = {
 const storage = new AsyncLocalStorage<Store>();
 
 /**
- * Shared Prisma singleton. Scripts (seed, apply-rls, tests) import this
- * directly for raw/admin work that must bypass both the Proxy routing and
- * the tenant ALS.
+ * Shared Prisma singleton for RUNTIME queries.
+ *
+ * Connects as `dorm_app` (NOSUPERUSER + NOBYPASSRLS) via `DATABASE_URL_APP`
+ * so RLS policies are actually enforced. `DATABASE_URL` (owned by the
+ * superuser `dorm`) is reserved for migrations, `apply-rls`, and
+ * `apply-roles` — never for runtime queries.
+ *
+ * Fallback chain:
+ *   1. `DATABASE_URL_APP` (preferred — non-privileged app role)
+ *   2. `DATABASE_URL`     (fallback — warns, because RLS may be bypassed if
+ *                          the URL points at a SUPERUSER)
+ *
+ * Scripts that need superuser access (seed, apply-rls, apply-roles) should
+ * NOT use this client — they instantiate their own PrismaClient with
+ * `ADMIN_DATABASE_URL` / `DATABASE_URL`.
  */
+const APP_URL = process.env.DATABASE_URL_APP ?? process.env.DATABASE_URL;
+if (!process.env.DATABASE_URL_APP && process.env.NODE_ENV !== 'production') {
+  // eslint-disable-next-line no-console
+  console.warn(
+    '[@dorm/db] DATABASE_URL_APP is not set — falling back to DATABASE_URL. ' +
+      'RLS will NOT be enforced if DATABASE_URL points at a SUPERUSER / BYPASSRLS role. ' +
+      'Run `bun run apply-roles` and set DATABASE_URL_APP=postgres://dorm_app:…',
+  );
+}
+
 export const rawPrisma = new PrismaClient({
+  datasources: APP_URL ? { db: { url: APP_URL } } : undefined,
   log:
     process.env.PRISMA_DEBUG === '1'
       ? ['query', 'warn', 'error']
