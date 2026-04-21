@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  assertSlug,
-  getReservedSlugs,
-  normalizeSlug,
-  validateSlug,
-} from './slug.js';
+import { assertSlug, getReservedSlugs, normalizeSlug, validateSlug } from './slug.js';
 
 describe('validateSlug', () => {
   it.each([
@@ -30,14 +25,14 @@ describe('validateSlug', () => {
   });
 
   it.each([
-    'Acme',       // uppercase
-    'acme dorm',  // space
-    'acme_dorm',  // underscore
-    '-acme',      // leading hyphen
-    'acme-',      // trailing hyphen
-    'acme!',      // punctuation
-    'หอ',         // Thai
-    'acme.dorm',  // dot
+    'Acme', // uppercase
+    'acme dorm', // space
+    'acme_dorm', // underscore
+    '-acme', // leading hyphen
+    'acme-', // trailing hyphen
+    'acme!', // punctuation
+    'หอ', // Thai
+    'acme.dorm', // dot
   ])('rejects invalid chars: "%s"', (input) => {
     expect(validateSlug(input)).toEqual({ ok: false, error: 'invalid_chars' });
   });

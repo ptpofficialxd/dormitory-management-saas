@@ -35,13 +35,7 @@ export const MONEY_SCALE = 2 as const;
  * If you add a role: update Prisma enum + re-run migrate + update the RBAC
  * matrix in `src/rbac/index.ts`.
  */
-export const ROLES = [
-  'company_owner',
-  'property_manager',
-  'staff',
-  'tenant',
-  'guardian',
-] as const;
+export const ROLES = ['company_owner', 'property_manager', 'staff', 'tenant', 'guardian'] as const;
 export type Role = (typeof ROLES)[number];
 
 /**

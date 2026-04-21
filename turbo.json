@@ -1,10 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalDependencies": [
-    "**/.env",
-    "**/.env.*",
-    "tsconfig.base.json"
-  ],
+  "globalDependencies": ["**/.env", "**/.env.*", "tsconfig.base.json"],
   "globalEnv": [
     "NODE_ENV",
     "DATABASE_URL",

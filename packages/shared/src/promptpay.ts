@@ -32,11 +32,8 @@
  * digits uppercase — verified against the Bank of Thailand reference QR.
  */
 
-import {
-  COUNTRY_CODE_TH,
-  CURRENCY_NUMERIC_THB,
-} from './constants.js';
-import { toStorage, type MoneyInput } from './money.js';
+import { COUNTRY_CODE_TH, CURRENCY_NUMERIC_THB } from './constants.js';
+import { type MoneyInput, toStorage } from './money.js';
 
 // -----------------------------------------------------------------------
 // Helpers.
@@ -162,8 +159,7 @@ export function generatePromptPayPayload(opts: PromptPayQrOptions): string {
   // Tag 29 — Merchant Account Information (PromptPay):
   //   sub 00: AID = "A000000677010111"
   //   sub 01/02/03: the PromptPay ID value
-  const merchantAccount =
-    tlv('00', 'A000000677010111') + tlv(norm.subTag, norm.value);
+  const merchantAccount = tlv('00', 'A000000677010111') + tlv(norm.subTag, norm.value);
 
   const fields: string[] = [
     tlv('00', '01'), // Payload Format Indicator
@@ -182,7 +178,7 @@ export function generatePromptPayPayload(opts: PromptPayQrOptions): string {
 
   // Final CRC (tag 63) — length is always 04 (4 hex digits), and the CRC is
   // computed over the payload INCLUDING the literal "6304" prefix.
-  const withoutCrc = fields.join('') + '6304';
+  const withoutCrc = `${fields.join('')}6304`;
   const crc = crc16Ccitt(withoutCrc);
-  return withoutCrc + crc;
+  return `${withoutCrc}${crc}`;
 }

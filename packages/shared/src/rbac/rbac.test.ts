@@ -117,15 +117,13 @@ describe('RBAC — multi-role union', () => {
 
 describe('assertCan', () => {
   it('passes on allowed action', () => {
-    expect(() =>
-      assertCan({ roles: ['company_owner'] }, 'create', 'unit'),
-    ).not.toThrow();
+    expect(() => assertCan({ roles: ['company_owner'] }, 'create', 'unit')).not.toThrow();
   });
 
   it('throws with role info on denial', () => {
-    expect(() =>
-      assertCan({ roles: ['tenant'] }, 'approve', 'payment'),
-    ).toThrow(/Forbidden.*approve:payment.*tenant/);
+    expect(() => assertCan({ roles: ['tenant'] }, 'approve', 'payment')).toThrow(
+      /Forbidden.*approve:payment.*tenant/,
+    );
   });
 });
 
@@ -137,8 +135,6 @@ describe('permissionsFor', () => {
   });
 
   it('guardian has fewer permissions than company_owner', () => {
-    expect(permissionsFor('guardian').length).toBeLessThan(
-      permissionsFor('company_owner').length,
-    );
+    expect(permissionsFor('guardian').length).toBeLessThan(permissionsFor('company_owner').length);
   });
 });

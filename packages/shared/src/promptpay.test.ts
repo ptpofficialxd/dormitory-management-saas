@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  crc16Ccitt,
-  generatePromptPayPayload,
-  normalizePromptPayId,
-} from './promptpay.js';
+import { crc16Ccitt, generatePromptPayPayload, normalizePromptPayId } from './promptpay.js';
 
 describe('crc16Ccitt', () => {
   it('CRC("123456789") = 29B1 (canonical test vector)', () => {

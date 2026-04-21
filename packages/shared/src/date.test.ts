@@ -18,21 +18,15 @@ import {
 } from './date.js';
 
 describe('Period validation', () => {
-  it.each(['2026-01', '2026-12', '1999-06', '2100-02'])(
-    'accepts %s',
-    (p) => {
-      expect(isPeriod(p)).toBe(true);
-      expect(assertPeriod(p)).toBe(p);
-    },
-  );
+  it.each(['2026-01', '2026-12', '1999-06', '2100-02'])('accepts %s', (p) => {
+    expect(isPeriod(p)).toBe(true);
+    expect(assertPeriod(p)).toBe(p);
+  });
 
-  it.each(['2026-13', '2026-00', '2026-1', '202-01', 'abc', '', '2026/01'])(
-    'rejects "%s"',
-    (p) => {
-      expect(isPeriod(p)).toBe(false);
-      expect(() => assertPeriod(p)).toThrow();
-    },
-  );
+  it.each(['2026-13', '2026-00', '2026-1', '202-01', 'abc', '', '2026/01'])('rejects "%s"', (p) => {
+    expect(isPeriod(p)).toBe(false);
+    expect(() => assertPeriod(p)).toThrow();
+  });
 });
 
 describe('Period arithmetic', () => {
@@ -52,9 +46,7 @@ describe('Period arithmetic', () => {
 describe('periodStartUtc / periodEndUtc (Bangkok UTC+7)', () => {
   it('April 2026 period starts at 2026-03-31T17:00:00Z', () => {
     // 2026-04-01 00:00 ICT = 2026-03-31 17:00 UTC
-    expect(periodStartUtc(assertPeriod('2026-04')).toISOString()).toBe(
-      '2026-03-31T17:00:00.000Z',
-    );
+    expect(periodStartUtc(assertPeriod('2026-04')).toISOString()).toBe('2026-03-31T17:00:00.000Z');
   });
 
   it('April end = May start', () => {
@@ -114,9 +106,7 @@ describe('formatBangkokIntl', () => {
 
 describe('parseIsoUtc', () => {
   it('parses valid ISO 8601', () => {
-    expect(parseIsoUtc('2026-04-21T07:30:00.000Z')?.toISOString()).toBe(
-      '2026-04-21T07:30:00.000Z',
-    );
+    expect(parseIsoUtc('2026-04-21T07:30:00.000Z')?.toISOString()).toBe('2026-04-21T07:30:00.000Z');
   });
 
   it('returns null on garbage', () => {

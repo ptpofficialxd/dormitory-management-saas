@@ -4,13 +4,7 @@
  */
 
 import { z } from 'zod';
-import {
-  PERIOD_REGEX,
-  ROLES,
-  SLUG_MAX_LEN,
-  SLUG_MIN_LEN,
-  SLUG_REGEX,
-} from '../constants.js';
+import { PERIOD_REGEX, ROLES, SLUG_MAX_LEN, SLUG_MIN_LEN, SLUG_REGEX } from '../constants.js';
 
 /** RFC 4122 UUID v1–v8. Used for every primary key + tenant FK. */
 export const uuidSchema = z.string().uuid();
@@ -30,9 +24,7 @@ export const slugSchema = z
   .regex(SLUG_REGEX, 'Invalid slug format');
 
 /** Billing period `YYYY-MM`. */
-export const periodSchema = z
-  .string()
-  .regex(PERIOD_REGEX, 'Expected YYYY-MM format');
+export const periodSchema = z.string().regex(PERIOD_REGEX, 'Expected YYYY-MM format');
 
 /**
  * Money — represented on the wire as a string (e.g. `"5500.00"`). Avoids

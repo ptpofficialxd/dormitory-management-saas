@@ -12,8 +12,8 @@
  * Run with: `bun run test` in packages/db.
  */
 
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Prisma } from '@prisma/client';
 import { disconnect, prisma, rawPrisma } from './client.js';
 import { withTenant } from './tenant-context.js';
 
@@ -30,9 +30,7 @@ beforeAll(async () => {
   );
 
   if (!a || !b) {
-    throw new Error(
-      'Seed data not found. Run `bun run db:setup` before running this test.',
-    );
+    throw new Error('Seed data not found. Run `bun run db:setup` before running this test.');
   }
 
   companyAId = a.id;
@@ -45,25 +43,19 @@ afterAll(async () => {
 
 describe('RLS — read isolation', () => {
   it('Company A reads only its own properties', async () => {
-    const props = await withTenant({ companyId: companyAId }, () =>
-      prisma.property.findMany(),
-    );
+    const props = await withTenant({ companyId: companyAId }, () => prisma.property.findMany());
     expect(props).toHaveLength(1);
     expect(props[0]?.companyId).toBe(companyAId);
   });
 
   it('Company B reads only its own properties', async () => {
-    const props = await withTenant({ companyId: companyBId }, () =>
-      prisma.property.findMany(),
-    );
+    const props = await withTenant({ companyId: companyBId }, () => prisma.property.findMany());
     expect(props).toHaveLength(1);
     expect(props[0]?.companyId).toBe(companyBId);
   });
 
   it('Company A sees only its own units (2 seeded)', async () => {
-    const units = await withTenant({ companyId: companyAId }, () =>
-      prisma.unit.findMany(),
-    );
+    const units = await withTenant({ companyId: companyAId }, () => prisma.unit.findMany());
     expect(units).toHaveLength(2);
     for (const u of units) expect(u.companyId).toBe(companyAId);
   });
@@ -128,9 +120,7 @@ describe('audit_log — append-only trigger', () => {
   it('DELETE on audit_log is rejected', async () => {
     await expect(
       withTenant({ companyId: '', bypassRls: true }, () =>
-        prisma.$executeRawUnsafe(
-          `DELETE FROM audit_log WHERE action = 'test.update'`,
-        ),
+        prisma.$executeRawUnsafe(`DELETE FROM audit_log WHERE action = 'test.update'`),
       ),
     ).rejects.toThrow(/append-only/i);
   });

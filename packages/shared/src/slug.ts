@@ -55,11 +55,7 @@ const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   'www',
 ]);
 
-export type SlugValidationError =
-  | 'too_short'
-  | 'too_long'
-  | 'invalid_chars'
-  | 'reserved';
+export type SlugValidationError = 'too_short' | 'too_long' | 'invalid_chars' | 'reserved';
 
 export type SlugValidationResult =
   | { ok: true; value: string }

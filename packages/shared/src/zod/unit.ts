@@ -1,16 +1,7 @@
 import { z } from 'zod';
-import {
-  companyIdSchema,
-  moneySchema,
-  uuidSchema,
-} from './primitives.js';
+import { companyIdSchema, moneySchema, uuidSchema } from './primitives.js';
 
-export const unitStatusSchema = z.enum([
-  'available',
-  'occupied',
-  'reserved',
-  'maintenance',
-]);
+export const unitStatusSchema = z.enum(['available', 'occupied', 'reserved', 'maintenance']);
 export type UnitStatus = z.infer<typeof unitStatusSchema>;
 
 export const unitSchema = z.object({

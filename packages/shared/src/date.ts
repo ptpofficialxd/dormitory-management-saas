@@ -13,20 +13,9 @@
  * Dependencies: `date-fns-tz` v3 (tree-shakeable, works in the browser).
  */
 
-import {
-  addMonths,
-  endOfMonth,
-  format,
-  parse,
-  parseISO,
-  startOfMonth,
-} from 'date-fns';
+import { addMonths, endOfMonth, format, parse, parseISO, startOfMonth } from 'date-fns';
 import { fromZonedTime, toZonedTime } from 'date-fns-tz';
-import {
-  LOCALE_TH,
-  PERIOD_REGEX,
-  TIMEZONE_BANGKOK,
-} from './constants.js';
+import { LOCALE_TH, PERIOD_REGEX, TIMEZONE_BANGKOK } from './constants.js';
 
 /**
  * Opaque nominal type — a string known to match `YYYY-MM`.

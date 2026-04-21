@@ -34,11 +34,11 @@ const FORBIDDEN_PATTERNS = [
   // `Bun.<something>(`  or  `Bun.<something>.`  or  assignment/destructure
   { re: /\bBun\.\w+/g, label: 'Bun.* global' },
   // import from "bun"
-  { re: /from\s+['"]bun['"]/g, label: `import from 'bun'` },
-  { re: /require\(['"]bun['"]\)/g, label: `require('bun')` },
+  { re: /from\s+['"]bun['"]/g, label: "import from 'bun'" },
+  { re: /require\(['"]bun['"]\)/g, label: "require('bun')" },
   // bun:* specifiers (bun:test, bun:sqlite, bun:ffi, ...)
-  { re: /from\s+['"]bun:[\w-]+['"]/g, label: `import from 'bun:*'` },
-  { re: /require\(['"]bun:[\w-]+['"]\)/g, label: `require('bun:*')` },
+  { re: /from\s+['"]bun:[\w-]+['"]/g, label: "import from 'bun:*'" },
+  { re: /require\(['"]bun:[\w-]+['"]\)/g, label: "require('bun:*')" },
 ];
 
 /** @param {string} dir */
@@ -127,8 +127,8 @@ async function main() {
     const stripped = stripCommentsAndStrings(src);
     for (const { re, label } of FORBIDDEN_PATTERNS) {
       re.lastIndex = 0;
-      let m;
-      while ((m = re.exec(stripped)) !== null) {
+      let m = re.exec(stripped);
+      while (m !== null) {
         const offset = m.index;
         const before = src.slice(0, offset);
         const line = before.split('\n').length;
@@ -141,18 +141,21 @@ async function main() {
           label,
           snippet,
         });
+        m = re.exec(stripped);
       }
     }
   }
 
   if (hits.length === 0) {
-    console.log(`ok — no Bun-only APIs in ${SCAN_DIRS.join(', ')} (${allFiles.length} files scanned).`);
+    console.log(
+      `ok — no Bun-only APIs in ${SCAN_DIRS.join(', ')} (${allFiles.length} files scanned).`,
+    );
     exit(0);
   }
 
   console.error(`\n✖ ADR-0006 portability guard: found ${hits.length} Bun-only API usage(s).\n`);
-  console.error(`  App code must run on both Bun and Node. Wrap runtime-specific calls`);
-  console.error(`  behind an adapter with a Node fallback.\n`);
+  console.error('  App code must run on both Bun and Node. Wrap runtime-specific calls');
+  console.error('  behind an adapter with a Node fallback.\n');
   for (const h of hits) {
     console.error(`  ${h.file}:${h.line}:${h.col}  [${h.label}]`);
     console.error(`    ${h.snippet}`);

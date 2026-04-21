@@ -22,8 +22,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,13 +50,15 @@ function splitSqlStatements(sql: string): string[] {
   const len = sql.length;
 
   while (i < len) {
-    const ch = sql[i]!;
-    const next = sql[i + 1];
+    // charAt is bounds-safe and always returns string — avoids non-null
+    // assertions that Biome's noNonNullAssertion rule flags.
+    const ch = sql.charAt(i);
+    const next = sql.charAt(i + 1);
 
     // Line comment: -- ... \n
     if (ch === '-' && next === '-') {
-      while (i < len && sql[i] !== '\n') {
-        current += sql[i];
+      while (i < len && sql.charAt(i) !== '\n') {
+        current += sql.charAt(i);
         i++;
       }
       continue;
@@ -65,15 +67,15 @@ function splitSqlStatements(sql: string): string[] {
     // Block comment: /* ... */
     if (ch === '/' && next === '*') {
       current += ch;
-      current += next!;
+      current += next;
       i += 2;
-      while (i < len && !(sql[i] === '*' && sql[i + 1] === '/')) {
-        current += sql[i];
+      while (i < len && !(sql.charAt(i) === '*' && sql.charAt(i + 1) === '/')) {
+        current += sql.charAt(i);
         i++;
       }
       if (i < len) {
-        current += sql[i]!;     // *
-        current += sql[i + 1]!; // /
+        current += sql.charAt(i); // *
+        current += sql.charAt(i + 1); // /
         i += 2;
       }
       continue;
@@ -84,17 +86,17 @@ function splitSqlStatements(sql: string): string[] {
       current += ch;
       i++;
       while (i < len) {
-        if (sql[i] === "'" && sql[i + 1] === "'") {
+        if (sql.charAt(i) === "'" && sql.charAt(i + 1) === "'") {
           current += "''";
           i += 2;
           continue;
         }
-        if (sql[i] === "'") {
+        if (sql.charAt(i) === "'") {
           current += "'";
           i++;
           break;
         }
-        current += sql[i];
+        current += sql.charAt(i);
         i++;
       }
       continue;
@@ -104,12 +106,12 @@ function splitSqlStatements(sql: string): string[] {
     if (ch === '"') {
       current += ch;
       i++;
-      while (i < len && sql[i] !== '"') {
-        current += sql[i];
+      while (i < len && sql.charAt(i) !== '"') {
+        current += sql.charAt(i);
         i++;
       }
       if (i < len) {
-        current += sql[i]!; // closing "
+        current += sql.charAt(i); // closing "
         i++;
       }
       continue;
@@ -191,8 +193,7 @@ async function main(): Promise<void> {
   const client = new PrismaClient();
   try {
     await client.$transaction(async (tx) => {
-      for (let idx = 0; idx < statements.length; idx++) {
-        const stmt = statements[idx]!;
+      for (const [idx, stmt] of statements.entries()) {
         const preview = stmt.replace(/\s+/g, ' ').slice(0, 72);
         console.log(`  [${idx + 1}/${statements.length}] ${preview}${stmt.length > 72 ? '…' : ''}`);
         await tx.$executeRawUnsafe(stmt);

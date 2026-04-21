@@ -103,11 +103,7 @@ export class IdempotencyConflictError extends DomainError {
 
 export class RateLimitedError extends DomainError {
   constructor(retryAfterSec: number) {
-    super(
-      'rate_limited',
-      `Rate limited. Retry after ${retryAfterSec}s.`,
-      { retryAfterSec },
-    );
+    super('rate_limited', `Rate limited. Retry after ${retryAfterSec}s.`, { retryAfterSec });
     this.name = 'RateLimitedError';
   }
 }

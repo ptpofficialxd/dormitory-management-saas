@@ -1,4 +1,4 @@
-import { hash, verify, Algorithm } from '@node-rs/argon2';
+import { type Algorithm, hash, verify } from '@node-rs/argon2';
 
 /**
  * Argon2id parameters — OWASP Password Storage Cheat Sheet (2024 recommendation).
@@ -9,9 +9,15 @@ import { hash, verify, Algorithm } from '@node-rs/argon2';
  *
  * These numbers are tuned so hashing takes ~50–100ms on a modern laptop
  * (acceptable for login, prohibitive for brute force). Revisit annually.
+ *
+ * `algorithm: 2` = `Algorithm.Argon2id`. Hard-coded as a numeric literal
+ * because `@node-rs/argon2` exports `Algorithm` as a `const enum`, which
+ * `isolatedModules` (TS2748) forbids dereferencing at call sites. The
+ * numeric mapping (Argon2d=0, Argon2i=1, Argon2id=2) is part of the
+ * package's documented ABI and hasn't changed since v1.0.
  */
 const ARGON2_CONFIG = {
-  algorithm: Algorithm.Argon2id,
+  algorithm: 2 as Algorithm,
   memoryCost: 19_456,
   timeCost: 2,
   parallelism: 1,

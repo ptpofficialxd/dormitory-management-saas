@@ -197,12 +197,7 @@ const TENANT = keys([
  * `guardian` — Phase-2 role for student housing. Read-only access to the
  * linked tenant's bills and announcements.
  */
-const GUARDIAN = keys([
-  'announcement:read',
-  'contract:read',
-  'invoice:read',
-  'payment:read',
-]);
+const GUARDIAN = keys(['announcement:read', 'contract:read', 'invoice:read', 'payment:read']);
 
 const MATRIX: Readonly<Record<Role, ReadonlySet<PermissionKey>>> = {
   company_owner: COMPANY_OWNER,
@@ -243,11 +238,7 @@ export function can(user: AuthUser, action: Action, resource: Resource): boolean
 }
 
 /** Throws `Error` on denial — for server-side guards. */
-export function assertCan(
-  user: AuthUser,
-  action: Action,
-  resource: Resource,
-): void {
+export function assertCan(user: AuthUser, action: Action, resource: Resource): void {
   if (!can(user, action, resource)) {
     throw new Error(`Forbidden: ${action}:${resource} for roles=${user.roles.join(',')}`);
   }

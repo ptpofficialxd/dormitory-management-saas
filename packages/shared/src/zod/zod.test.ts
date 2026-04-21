@@ -12,9 +12,7 @@ import {
 
 describe('primitives — uuid / slug / money / period', () => {
   it('uuidSchema accepts v4', () => {
-    expect(
-      uuidSchema.safeParse('550e8400-e29b-41d4-a716-446655440000').success,
-    ).toBe(true);
+    expect(uuidSchema.safeParse('550e8400-e29b-41d4-a716-446655440000').success).toBe(true);
   });
 
   it('uuidSchema rejects non-UUID', () => {
@@ -64,9 +62,7 @@ describe('createCompanyInputSchema', () => {
   });
 
   it('rejects empty name', () => {
-    expect(
-      createCompanyInputSchema.safeParse({ slug: 'acme', name: '' }).success,
-    ).toBe(false);
+    expect(createCompanyInputSchema.safeParse({ slug: 'acme', name: '' }).success).toBe(false);
   });
 });
 

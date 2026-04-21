@@ -1,10 +1,5 @@
 import { z } from 'zod';
-import {
-  companyIdSchema,
-  isoUtcSchema,
-  moneySchema,
-  uuidSchema,
-} from './primitives.js';
+import { companyIdSchema, isoUtcSchema, moneySchema, uuidSchema } from './primitives.js';
 
 export const paymentStatusSchema = z.enum([
   'pending', // slip uploaded, awaiting review

@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import { type Prisma, PrismaClient } from '@prisma/client';
 
 /**
  * Per-request tenant context. Set at the API/request boundary (NestJS guard
@@ -67,10 +67,7 @@ if (!process.env.DATABASE_URL_APP && process.env.NODE_ENV !== 'production') {
 
 export const rawPrisma = new PrismaClient({
   datasources: APP_URL ? { db: { url: APP_URL } } : undefined,
-  log:
-    process.env.PRISMA_DEBUG === '1'
-      ? ['query', 'warn', 'error']
-      : ['warn', 'error'],
+  log: process.env.PRISMA_DEBUG === '1' ? ['query', 'warn', 'error'] : ['warn', 'error'],
 });
 
 /** Read the current tenant context, or `undefined` if outside any boundary. */
@@ -92,14 +89,11 @@ export function getActiveTx(): Prisma.TransactionClient | undefined {
  * Postgres would reject non-UUIDs when casting inside the RLS policy, but
  * catching early gives better errors and avoids wasting a tx.
  */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function assertValidCompanyId(companyId: string): void {
   if (!UUID_RE.test(companyId)) {
-    throw new Error(
-      `Invalid companyId (expected UUID v1–v8): ${JSON.stringify(companyId)}`,
-    );
+    throw new Error(`Invalid companyId (expected UUID v1–v8): ${JSON.stringify(companyId)}`);
   }
 }
 
@@ -121,10 +115,7 @@ export function assertValidCompanyId(companyId: string): void {
  *     (NOT string interpolation) — no SQL-injection surface.
  *   * If `fn` throws, the transaction rolls back automatically.
  */
-export async function withTenant<T>(
-  ctx: TenantContext,
-  fn: () => Promise<T> | T,
-): Promise<T> {
+export async function withTenant<T>(ctx: TenantContext, fn: () => Promise<T> | T): Promise<T> {
   if (!ctx.bypassRls) {
     assertValidCompanyId(ctx.companyId);
   }
