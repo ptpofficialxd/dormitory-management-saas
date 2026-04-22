@@ -63,3 +63,16 @@ export const updateContractInputSchema = z.object({
   notes: z.string().max(1024).optional(),
 });
 export type UpdateContractInput = z.infer<typeof updateContractInputSchema>;
+
+/**
+ * Query string for `GET /contracts`. Filter by `unitId`/`tenantId`/`status`
+ * combine under AND; cursor + limit follow the standard pattern.
+ */
+export const listContractsQuerySchema = z.object({
+  unitId: uuidSchema.optional(),
+  tenantId: uuidSchema.optional(),
+  status: contractStatusSchema.optional(),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListContractsQuery = z.infer<typeof listContractsQuerySchema>;

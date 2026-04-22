@@ -20,6 +20,7 @@ import {
   issueInvoiceInputSchema,
   lineWebhookPayloadSchema,
   listAuditLogsInputSchema,
+  listContractsQuerySchema,
   listInvoicesQuerySchema,
   listPropertiesQuerySchema,
   listTenantsQuerySchema,
@@ -1086,6 +1087,38 @@ describe('listUnitsQuerySchema', () => {
 
   it('rejects limit > 100 (DoS guard)', () => {
     expect(listUnitsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
+  });
+});
+
+describe('listContractsQuerySchema', () => {
+  it('coerces string limit + applies default 20', () => {
+    expect(listContractsQuerySchema.parse({ limit: '50' }).limit).toBe(50);
+    expect(listContractsQuerySchema.parse({}).limit).toBe(20);
+  });
+
+  it('accepts optional unitId + tenantId + status filters', () => {
+    const parsed = listContractsQuerySchema.parse({
+      unitId: UUID_A,
+      tenantId: UUID_B,
+      status: 'active',
+      limit: '10',
+    });
+    expect(parsed.unitId).toBe(UUID_A);
+    expect(parsed.tenantId).toBe(UUID_B);
+    expect(parsed.status).toBe('active');
+  });
+
+  it('rejects non-UUID unitId / tenantId', () => {
+    expect(listContractsQuerySchema.safeParse({ unitId: 'not-uuid' }).success).toBe(false);
+    expect(listContractsQuerySchema.safeParse({ tenantId: 'not-uuid' }).success).toBe(false);
+  });
+
+  it('rejects unknown status enum', () => {
+    expect(listContractsQuerySchema.safeParse({ status: 'cancelled' }).success).toBe(false);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listContractsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
   });
 });
 

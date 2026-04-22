@@ -10,6 +10,7 @@ import { TenantContextInterceptor } from './common/middleware/tenant-context.int
 import { AuthModule } from './modules/auth/auth.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
+import { ContractModule } from './modules/contract/contract.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
@@ -49,6 +50,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
     PropertyModule,
     UnitModule,
     TenantModule,
+    ContractModule,
     BillingModule,
   ],
   providers: [
