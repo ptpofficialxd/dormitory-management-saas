@@ -681,7 +681,8 @@ describe('rejectPaymentInputSchema', () => {
 
 describe('uploadSlipInputSchema', () => {
   const VALID_SHA = 'a'.repeat(64);
-  const VALID_KEY = 'companies/11111111-1111-1111-8111-111111111111/slips/22222222-2222-2222-8222-222222222222/abc.jpg';
+  const VALID_KEY =
+    'companies/11111111-1111-1111-8111-111111111111/slips/22222222-2222-2222-8222-222222222222/abc.jpg';
 
   it('accepts valid slip metadata', () => {
     expect(

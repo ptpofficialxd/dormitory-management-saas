@@ -176,6 +176,19 @@ CREATE POLICY tenant_isolation ON slip
   USING (app_rls_bypass() OR company_id = app_current_company_id())
   WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
 
+-- ==== company_line_channel ===============================================
+-- Lookup-by-channelId at webhook entry MUST use `bypassRls: true` because
+-- there is no tenant context yet (LINE servers don't carry our JWT). Once
+-- the lookup resolves the companyId, the rest of the request runs under
+-- normal RLS scope.
+ALTER TABLE company_line_channel ENABLE ROW LEVEL SECURITY;
+ALTER TABLE company_line_channel FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON company_line_channel;
+CREATE POLICY tenant_isolation ON company_line_channel
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
 -- -------------------------------------------------------------------------
 -- Append-only enforcement for audit_log (CLAUDE.md §3.7).
 -- UPDATE / DELETE are denied even by the bypass role.

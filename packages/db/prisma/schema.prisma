@@ -154,6 +154,11 @@ model Company {
   invoiceItems    InvoiceItem[]
   payments        Payment[]
   slips           Slip[]
+  // 1 company = 1 LINE Official Account in MVP. Use `?` so a company can
+  // exist before LINE is configured (typical onboarding flow). Multi-OA
+  // support is a future migration: drop the `@unique` on companyId, add
+  // a name/role per row, expose channel selector in admin UI.
+  lineChannel     CompanyLineChannel?
 
   @@index([status])
   @@map("company")
@@ -538,4 +543,51 @@ model Slip {
   @@index([companyId])
   @@index([sha256])
   @@map("slip")
+}
+
+// =========================================================================
+// CompanyLineChannel — per-tenant LINE Official Account configuration.
+// One row per company in MVP (`@@unique` on companyId via `@unique` on FK).
+//
+// Webhook routing:
+//   POST /webhooks/line/:channelId  →  lookup CompanyLineChannel by `channelId`
+//   →  resolve `companyId` →  withTenant({ companyId, bypassRls: true }, …)
+//   The webhook is a PUBLIC route (no JWT — LINE servers call it), so we
+//   bootstrap RLS context from the channel-id lookup itself. The lookup
+//   itself runs with `bypassRls: true` because there's no tenant context yet.
+//
+// Secret storage:
+//   `channelSecret` + `channelAccessToken` are encrypted at rest via
+//   pgcrypto (PiiCryptoService) — same pattern as `tenant.nationalId` /
+//   `tenant.phone`. PGP framing inflates a 32-char plaintext to ~300 base64
+//   chars and a 200-char access-token plaintext to ~600 chars, so we size
+//   `channelSecret VarChar(512)` and `channelAccessToken VarChar(2048)` to
+//   absorb both legacy long-lived tokens (≈170 chars) AND v2.1 stateless
+//   JWT tokens (which can exceed 300 chars).
+//
+// `channelId` is GLOBALLY unique (LINE assigns it; one merchant owns it).
+// We rely on the global unique index to map an inbound webhook URL to the
+// correct company without needing the request to carry a tenant hint.
+// =========================================================================
+
+model CompanyLineChannel {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId          String   @unique @map("company_id") @db.Uuid
+  /** LINE-assigned channel ID (numeric, ≤32 digits in practice). Unique globally. */
+  channelId          String   @unique @map("channel_id") @db.VarChar(32)
+  /** Encrypted at rest (pgcrypto). Used for `X-Line-Signature` HMAC verify. */
+  channelSecret      String   @map("channel_secret") @db.VarChar(512)
+  /** Encrypted at rest (pgcrypto). Used for Messaging API push/reply. */
+  channelAccessToken String   @map("channel_access_token") @db.VarChar(2048)
+  /** Optional `@xxx` LINE OA basic ID (for deep links / display). */
+  basicId            String?  @map("basic_id") @db.VarChar(64)
+  /** Optional human-readable label for admin UI. */
+  displayName        String?  @map("display_name") @db.VarChar(128)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@map("company_line_channel")
 }

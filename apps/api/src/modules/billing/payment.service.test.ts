@@ -16,8 +16,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *   - tenantId NOT trusted from caller — sourced from invoice
  *   - Idempotency: P2002 on (company_id, idempotency_key) → return existing
  *     row (200), NOT throw
+ *   - SAVEPOINT recovery: $executeRawUnsafe SAVEPOINT/ROLLBACK/RELEASE wraps
+ *     the INSERT so a concurrent collision doesn't abort the outer request tx
  *   - State machine — confirm:
- *       pending → confirmed (happy + invoice rollup runs in tx)
+ *       pending → confirmed (happy + invoice rollup runs against same prisma)
  *       confirmed → confirmed (idempotent no-op)
  *       rejected → confirm → 409 PaymentAlreadyRejected
  *   - State machine — reject:
@@ -29,6 +31,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *       0 < paid_total < total      → invoice.status = 'partially_paid'
  *       void invoices skipped
  *
+ * NOTE: confirm() / reject() / recomputeInvoiceStatus() use the `prisma` Proxy
+ * directly. The OUTER `withTenant()` tx (opened by TenantContextInterceptor at
+ * the request boundary) is what gives them atomicity — there is NO nested
+ * `prisma.$transaction()` call here. Tests therefore mock `prisma.payment.*`
+ * and `prisma.invoice.*` (NOT a tx-callback shape).
+ *
  * RLS cross-company isolation is asserted in the e2e suite (Postgres-only).
  */
 
@@ -39,11 +47,7 @@ const mockPaymentCreate = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockInvoiceFindUnique = vi.fn();
 const mockInvoiceUpdate = vi.fn();
-const mockTxPaymentUpdate = vi.fn();
-const mockTxPaymentFindMany = vi.fn();
-const mockTxInvoiceFindUnique = vi.fn();
-const mockTxInvoiceUpdate = vi.fn();
-const mockTransaction = vi.fn();
+const mockExecuteRawUnsafe = vi.fn();
 const mockGetTenantContext = vi.fn();
 
 vi.mock('@dorm/db', () => ({
@@ -59,7 +63,7 @@ vi.mock('@dorm/db', () => ({
       findUnique: mockInvoiceFindUnique,
       update: mockInvoiceUpdate,
     },
-    $transaction: mockTransaction,
+    $executeRawUnsafe: mockExecuteRawUnsafe,
   },
   getTenantContext: mockGetTenantContext,
   Prisma: {},
@@ -78,23 +82,6 @@ const IDEMPOTENCY_KEY = '01HNV4YGZJK5TX1Z3F8H9ABCDEF';
 /** Minimal Decimal-shape mock — `toString()` is all the service consumes. */
 const dec = (s: string) => ({ toString: () => s });
 
-/**
- * Tx callback invoker — wires the mocks for tx.payment.update and
- * tx.invoice.findUnique/update to a fresh test-controlled set per test.
- */
-function makeTx() {
-  return {
-    payment: {
-      update: mockTxPaymentUpdate,
-      findMany: mockTxPaymentFindMany,
-    },
-    invoice: {
-      findUnique: mockTxInvoiceFindUnique,
-      update: mockTxInvoiceUpdate,
-    },
-  };
-}
-
 describe('PaymentService', () => {
   let service: InstanceType<typeof PaymentService>;
 
@@ -106,19 +93,12 @@ describe('PaymentService', () => {
     mockPaymentUpdate.mockReset();
     mockInvoiceFindUnique.mockReset();
     mockInvoiceUpdate.mockReset();
-    mockTxPaymentUpdate.mockReset();
-    mockTxPaymentFindMany.mockReset();
-    mockTxInvoiceFindUnique.mockReset();
-    mockTxInvoiceUpdate.mockReset();
-    mockTransaction.mockReset();
+    mockExecuteRawUnsafe.mockReset();
     mockGetTenantContext.mockReset();
     mockGetTenantContext.mockReturnValue({ companyId: COMPANY_ID });
-    // Default: invoke the callback with a synthetic tx so the implementation
-    // sees a usable interface. Tests that need to assert tx-internals
-    // override the per-mock impls.
-    mockTransaction.mockImplementation(async (cb: (tx: ReturnType<typeof makeTx>) => unknown) =>
-      cb(makeTx()),
-    );
+    // SAVEPOINT / RELEASE / ROLLBACK are no-ops at the mock layer — pgcrypto
+    // and tx-state behaviour belong to the e2e suite.
+    mockExecuteRawUnsafe.mockResolvedValue(0);
     service = new PaymentService();
   });
 
@@ -262,6 +242,7 @@ describe('PaymentService', () => {
         status: 'issued',
         total: dec('4800.00'),
       });
+      mockPaymentFindFirst.mockResolvedValueOnce(null); // no replay
       mockPaymentCreate.mockResolvedValueOnce({ id: PAYMENT_ID, status: 'pending' });
 
       await service.create(baseInput, IDEMPOTENCY_KEY);
@@ -276,6 +257,12 @@ describe('PaymentService', () => {
       expect(args.data.status).toBe('pending');
       expect(args.data.paidAt).toBeNull();
       expect(args.data.idempotencyKey).toBe(IDEMPOTENCY_KEY);
+      // SAVEPOINT + RELEASE on the happy path (no ROLLBACK).
+      const stmts = mockExecuteRawUnsafe.mock.calls.map((c) => c[0] as string);
+      expect(stmts).toEqual([
+        'SAVEPOINT idempotent_payment_create',
+        'RELEASE SAVEPOINT idempotent_payment_create',
+      ]);
     });
 
     it('forwards optional paidAt as a Date when provided', async () => {
@@ -285,6 +272,7 @@ describe('PaymentService', () => {
         status: 'issued',
         total: dec('4800.00'),
       });
+      mockPaymentFindFirst.mockResolvedValueOnce(null); // no replay
       mockPaymentCreate.mockResolvedValueOnce({ id: PAYMENT_ID });
 
       await service.create({ ...baseInput, paidAt: '2026-04-20T10:30:00.000Z' }, IDEMPOTENCY_KEY);
@@ -295,38 +283,69 @@ describe('PaymentService', () => {
       expect((args.data.paidAt as Date).toISOString()).toBe('2026-04-20T10:30:00.000Z');
     });
 
-    it('idempotency: P2002 on (company_id, idempotency_key) → returns existing row (no throw)', async () => {
+    it('idempotency replay (pre-check): findFirst hit short-circuits BEFORE create()', async () => {
       mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         tenantId: TENANT_ID,
         status: 'issued',
         total: dec('4800.00'),
       });
-      const p2002 = Object.assign(new Error('Unique constraint failed'), {
-        code: 'P2002',
-        meta: { target: ['company_id', 'idempotency_key'] },
-      });
-      mockPaymentCreate.mockRejectedValueOnce(p2002);
       const existing = { id: PAYMENT_ID, status: 'pending', idempotencyKey: IDEMPOTENCY_KEY };
       mockPaymentFindFirst.mockResolvedValueOnce(existing);
 
       const result = await service.create(baseInput, IDEMPOTENCY_KEY);
 
       expect(result).toBe(existing);
+      expect(mockPaymentCreate).not.toHaveBeenCalled();
+      expect(mockExecuteRawUnsafe).not.toHaveBeenCalled(); // savepoint never opened
       // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
       const lookupArgs = mockPaymentFindFirst.mock.calls[0]![0];
       expect(lookupArgs.where).toEqual({ idempotencyKey: IDEMPOTENCY_KEY });
     });
 
-    it('rethrows non-P2002 Prisma errors untouched', async () => {
+    it('idempotency race (savepoint catch): P2002 → ROLLBACK + lookup returns existing row', async () => {
       mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         tenantId: TENANT_ID,
         status: 'issued',
         total: dec('4800.00'),
       });
+      mockPaymentFindFirst.mockResolvedValueOnce(null); // pre-check miss
+      const p2002 = Object.assign(new Error('Unique constraint failed'), {
+        code: 'P2002',
+        meta: { target: ['company_id', 'idempotency_key'] },
+      });
+      mockPaymentCreate.mockRejectedValueOnce(p2002);
+      const existing = { id: PAYMENT_ID, status: 'pending', idempotencyKey: IDEMPOTENCY_KEY };
+      mockPaymentFindFirst.mockResolvedValueOnce(existing); // post-rollback lookup
+
+      const result = await service.create(baseInput, IDEMPOTENCY_KEY);
+
+      expect(result).toBe(existing);
+      // SAVEPOINT then ROLLBACK (no RELEASE on failure).
+      const stmts = mockExecuteRawUnsafe.mock.calls.map((c) => c[0] as string);
+      expect(stmts).toEqual([
+        'SAVEPOINT idempotent_payment_create',
+        'ROLLBACK TO SAVEPOINT idempotent_payment_create',
+      ]);
+    });
+
+    it('rethrows non-P2002 Prisma errors after rolling back the savepoint', async () => {
+      mockInvoiceFindUnique.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        tenantId: TENANT_ID,
+        status: 'issued',
+        total: dec('4800.00'),
+      });
+      mockPaymentFindFirst.mockResolvedValueOnce(null); // pre-check miss
       mockPaymentCreate.mockRejectedValueOnce(new Error('boom'));
       await expect(service.create(baseInput, IDEMPOTENCY_KEY)).rejects.toThrow('boom');
+      const stmts = mockExecuteRawUnsafe.mock.calls.map((c) => c[0] as string);
+      // SAVEPOINT then ROLLBACK on the failure path so the outer tx survives.
+      expect(stmts).toEqual([
+        'SAVEPOINT idempotent_payment_create',
+        'ROLLBACK TO SAVEPOINT idempotent_payment_create',
+      ]);
     });
   });
 
@@ -335,43 +354,45 @@ describe('PaymentService', () => {
   // ===================================================================
 
   describe('confirm', () => {
-    it('flips pending → confirmed inside a transaction with confirmedByUserId', async () => {
+    it('flips pending → confirmed with confirmedByUserId stamped', async () => {
       mockPaymentFindUnique.mockResolvedValueOnce({
         id: PAYMENT_ID,
         status: 'pending',
         invoiceId: INVOICE_ID,
         amount: dec('4800.00'),
       });
-      mockTxPaymentUpdate.mockResolvedValueOnce({
+      mockPaymentUpdate.mockResolvedValueOnce({
         id: PAYMENT_ID,
         status: 'confirmed',
         invoiceId: INVOICE_ID,
       });
-      mockTxInvoiceFindUnique.mockResolvedValueOnce({
+      mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         total: dec('4800.00'),
         status: 'issued',
       });
-      mockTxPaymentFindMany.mockResolvedValueOnce([{ amount: dec('4800.00') }]);
+      mockPaymentFindMany.mockResolvedValueOnce([{ amount: dec('4800.00') }]);
 
       await service.confirm(PAYMENT_ID, ADMIN_USER_ID, 'looks legit');
 
-      // tx.payment.update assertions
+      // payment.update assertions
       // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
-      const updArgs = mockTxPaymentUpdate.mock.calls[0]![0];
+      const updArgs = mockPaymentUpdate.mock.calls[0]![0];
+      expect(updArgs.where).toEqual({ id: PAYMENT_ID });
       expect(updArgs.data.status).toBe('confirmed');
       expect(updArgs.data.confirmedByUserId).toBe(ADMIN_USER_ID);
       expect(updArgs.data.confirmedAt).toBeInstanceOf(Date);
     });
 
-    it('is idempotent on already-confirmed (no DB hit, returns row)', async () => {
+    it('is idempotent on already-confirmed (no DB write, returns existing row)', async () => {
       const existing = { id: PAYMENT_ID, status: 'confirmed', invoiceId: INVOICE_ID };
       mockPaymentFindUnique.mockResolvedValueOnce(existing);
 
       const result = await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
 
       expect(result).toBe(existing);
-      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockPaymentUpdate).not.toHaveBeenCalled();
+      expect(mockInvoiceUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses rejected → confirm with 409 PaymentAlreadyRejected', async () => {
@@ -381,7 +402,8 @@ describe('PaymentService', () => {
         invoiceId: INVOICE_ID,
       });
       await expect(service.confirm(PAYMENT_ID, ADMIN_USER_ID)).rejects.toThrow(ConflictException);
-      expect(mockTransaction).not.toHaveBeenCalled();
+      expect(mockPaymentUpdate).not.toHaveBeenCalled();
+      expect(mockInvoiceUpdate).not.toHaveBeenCalled();
     });
 
     it('rollup: confirmed sum == total → invoice.status = paid', async () => {
@@ -390,18 +412,18 @@ describe('PaymentService', () => {
         status: 'pending',
         invoiceId: INVOICE_ID,
       });
-      mockTxPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
-      mockTxInvoiceFindUnique.mockResolvedValueOnce({
+      mockPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
+      mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         total: dec('4800.00'),
         status: 'issued',
       });
-      mockTxPaymentFindMany.mockResolvedValueOnce([{ amount: dec('4800.00') }]);
+      mockPaymentFindMany.mockResolvedValueOnce([{ amount: dec('4800.00') }]);
 
       await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
 
       // biome-ignore lint/style/noNonNullAssertion: rollup MUST run and update invoice
-      const updArgs = mockTxInvoiceUpdate.mock.calls[0]![0];
+      const updArgs = mockInvoiceUpdate.mock.calls[0]![0];
       expect(updArgs.data.status).toBe('paid');
     });
 
@@ -411,13 +433,13 @@ describe('PaymentService', () => {
         status: 'pending',
         invoiceId: INVOICE_ID,
       });
-      mockTxPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
-      mockTxInvoiceFindUnique.mockResolvedValueOnce({
+      mockPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
+      mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         total: dec('4800.00'),
         status: 'issued',
       });
-      mockTxPaymentFindMany.mockResolvedValueOnce([
+      mockPaymentFindMany.mockResolvedValueOnce([
         { amount: dec('4800.00') },
         { amount: dec('100.00') }, // overpayment
       ]);
@@ -425,7 +447,7 @@ describe('PaymentService', () => {
       await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
 
       // biome-ignore lint/style/noNonNullAssertion: rollup MUST mark fully paid
-      const updArgs = mockTxInvoiceUpdate.mock.calls[0]![0];
+      const updArgs = mockInvoiceUpdate.mock.calls[0]![0];
       expect(updArgs.data.status).toBe('paid');
     });
 
@@ -435,18 +457,18 @@ describe('PaymentService', () => {
         status: 'pending',
         invoiceId: INVOICE_ID,
       });
-      mockTxPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
-      mockTxInvoiceFindUnique.mockResolvedValueOnce({
+      mockPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
+      mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         total: dec('4800.00'),
         status: 'issued',
       });
-      mockTxPaymentFindMany.mockResolvedValueOnce([{ amount: dec('2400.00') }]);
+      mockPaymentFindMany.mockResolvedValueOnce([{ amount: dec('2400.00') }]);
 
       await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
 
       // biome-ignore lint/style/noNonNullAssertion: rollup MUST mark partial
-      const updArgs = mockTxInvoiceUpdate.mock.calls[0]![0];
+      const updArgs = mockInvoiceUpdate.mock.calls[0]![0];
       expect(updArgs.data.status).toBe('partially_paid');
     });
 
@@ -456,8 +478,8 @@ describe('PaymentService', () => {
         status: 'pending',
         invoiceId: INVOICE_ID,
       });
-      mockTxPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
-      mockTxInvoiceFindUnique.mockResolvedValueOnce({
+      mockPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
+      mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         total: dec('4800.00'),
         status: 'void',
@@ -465,8 +487,8 @@ describe('PaymentService', () => {
 
       await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
 
-      expect(mockTxPaymentFindMany).not.toHaveBeenCalled(); // short-circuited
-      expect(mockTxInvoiceUpdate).not.toHaveBeenCalled();
+      expect(mockPaymentFindMany).not.toHaveBeenCalled(); // short-circuited
+      expect(mockInvoiceUpdate).not.toHaveBeenCalled();
     });
 
     it('rollup: skip when next status equals current (avoid no-op write + audit noise)', async () => {
@@ -475,18 +497,18 @@ describe('PaymentService', () => {
         status: 'pending',
         invoiceId: INVOICE_ID,
       });
-      mockTxPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
-      mockTxInvoiceFindUnique.mockResolvedValueOnce({
+      mockPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
+      mockInvoiceFindUnique.mockResolvedValueOnce({
         id: INVOICE_ID,
         total: dec('4800.00'),
         status: 'partially_paid', // already partial
       });
-      mockTxPaymentFindMany.mockResolvedValueOnce([{ amount: dec('2400.00') }]);
+      mockPaymentFindMany.mockResolvedValueOnce([{ amount: dec('2400.00') }]);
 
       await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
 
       // computed = partially_paid, current = partially_paid → no write
-      expect(mockTxInvoiceUpdate).not.toHaveBeenCalled();
+      expect(mockInvoiceUpdate).not.toHaveBeenCalled();
     });
   });
 

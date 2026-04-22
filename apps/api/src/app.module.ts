@@ -12,6 +12,7 @@ import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
 import { ContractModule } from './modules/contract/contract.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { LineModule } from './modules/line/line.module.js';
 import { MeterModule } from './modules/meter/meter.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
 import { ReadingModule } from './modules/reading/reading.module.js';
@@ -56,6 +57,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
     MeterModule,
     ReadingModule,
     BillingModule,
+    LineModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
