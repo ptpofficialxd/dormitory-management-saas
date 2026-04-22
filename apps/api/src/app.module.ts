@@ -12,6 +12,7 @@ import { CompanyModule } from './modules/company/company.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
+import { UnitModule } from './modules/unit/unit.module.js';
 
 /**
  * Root module — wires global cross-cutting concerns once.
@@ -37,7 +38,15 @@ import { StorageModule } from './modules/storage/storage.module.js';
  * To require roles: decorate with `@Roles('company_owner', 'property_manager')`.
  */
 @Module({
-  imports: [StorageModule, HealthModule, AuthModule, CompanyModule, PropertyModule, BillingModule],
+  imports: [
+    StorageModule,
+    HealthModule,
+    AuthModule,
+    CompanyModule,
+    PropertyModule,
+    UnitModule,
+    BillingModule,
+  ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: JwtGuard },

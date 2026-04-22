@@ -22,6 +22,7 @@ import {
   listAuditLogsInputSchema,
   listInvoicesQuerySchema,
   listPropertiesQuerySchema,
+  listUnitsQuerySchema,
   loginAdminInputSchema,
   loginLiffInputSchema,
   maintenanceCategorySchema,
@@ -1054,6 +1055,36 @@ describe('listPropertiesQuerySchema', () => {
 
   it('rejects cursor longer than 512 chars', () => {
     expect(listPropertiesQuerySchema.safeParse({ cursor: 'x'.repeat(513) }).success).toBe(false);
+  });
+});
+
+describe('listUnitsQuerySchema', () => {
+  it('coerces string limit + applies default 20', () => {
+    const parsed = listUnitsQuerySchema.parse({ limit: '50' });
+    expect(parsed.limit).toBe(50);
+    expect(listUnitsQuerySchema.parse({}).limit).toBe(20);
+  });
+
+  it('accepts optional propertyId + status filters', () => {
+    const parsed = listUnitsQuerySchema.parse({
+      propertyId: UUID_A,
+      status: 'vacant',
+      limit: '10',
+    });
+    expect(parsed.propertyId).toBe(UUID_A);
+    expect(parsed.status).toBe('vacant');
+  });
+
+  it('rejects non-UUID propertyId (caller bug surface)', () => {
+    expect(listUnitsQuerySchema.safeParse({ propertyId: 'not-a-uuid' }).success).toBe(false);
+  });
+
+  it('rejects unknown status enum values', () => {
+    expect(listUnitsQuerySchema.safeParse({ status: 'demolished' }).success).toBe(false);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listUnitsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
   });
 });
 

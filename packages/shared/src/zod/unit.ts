@@ -40,3 +40,20 @@ export const updateUnitInputSchema = createUnitInputSchema
   .partial()
   .extend({ status: unitStatusSchema.optional() });
 export type UpdateUnitInput = z.infer<typeof updateUnitInputSchema>;
+
+/**
+ * Query for `GET /c/:slug/units`. Filters AND-combined.
+ *
+ * `propertyId` filter is the most common access pattern (admin browses a
+ * single building); `status` filter powers the "show me vacancies" view.
+ *
+ * `cursor` is opaque base64url JSON `(createdAt, id)` decoded server-side.
+ * `limit` uses `z.coerce.number()` because query strings arrive as strings.
+ */
+export const listUnitsQuerySchema = z.object({
+  propertyId: uuidSchema.optional(),
+  status: unitStatusSchema.optional(),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListUnitsQuery = z.infer<typeof listUnitsQuerySchema>;
