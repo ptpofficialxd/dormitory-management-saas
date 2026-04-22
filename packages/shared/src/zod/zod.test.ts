@@ -326,6 +326,15 @@ describe('createTenantInputSchema', () => {
     ).toBe(true);
   });
 
+  it('accepts admin-prefilled input WITHOUT lineUserId (invite-code flow)', () => {
+    // Since #41: admin can create a tenant before the human binds via LIFF.
+    expect(
+      createTenantInputSchema.safeParse({
+        displayName: 'คุณไอซ์',
+      }).success,
+    ).toBe(true);
+  });
+
   it('rejects bad Thai nationalId', () => {
     expect(
       createTenantInputSchema.safeParse({

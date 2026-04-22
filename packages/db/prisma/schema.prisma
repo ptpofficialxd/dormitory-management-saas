@@ -159,6 +159,7 @@ model Company {
   // support is a future migration: drop the `@unique` on companyId, add
   // a name/role per row, expose channel selector in admin UI.
   lineChannel     CompanyLineChannel?
+  webhookEvents   WebhookEvent[]
 
   @@index([status])
   @@map("company")
@@ -299,7 +300,14 @@ model AuditLog {
 model Tenant {
   id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   companyId   String       @map("company_id") @db.Uuid
-  lineUserId  String       @map("line_user_id") @db.VarChar(64)
+  // Nullable since #41: admin can create a Tenant before the human even
+  // touches the LIFF app. The `lineUserId` is set later when the tenant
+  // redeems an invite-code (TenantInvite). The `(companyId, lineUserId)`
+  // unique index keeps duplicate-prevention semantics — Postgres treats
+  // multiple NULLs as DISTINCT, so unbound tenants don't collide with
+  // each other while still blocking two tenants binding the same
+  // LINE userId within one company.
+  lineUserId  String?      @map("line_user_id") @db.VarChar(64)
   displayName String       @map("display_name") @db.VarChar(128)
   pictureUrl  String?      @map("picture_url") @db.VarChar(512)
   // Encrypted at rest (pgcrypto). Stored as VARCHAR of base64-encoded ciphertext.
@@ -590,4 +598,75 @@ model CompanyLineChannel {
 
   @@index([companyId])
   @@map("company_line_channel")
+}
+
+// =========================================================================
+// WebhookEvent — durable record of every LINE webhook event we accept.
+//
+// Two jobs:
+//
+//   1. **Idempotency / dedup** — LINE retries a webhook on any non-2xx, on
+//      timeout, or on its own internal hiccup. The `(companyId, eventId)`
+//      unique index lets the controller use `INSERT … ON CONFLICT DO NOTHING`
+//      and treat the rowCount as the dedup signal: 0 inserted = replay,
+//      ack 200 immediately, no further work.
+//
+//   2. **Audit + replay buffer** — `payload` keeps the raw event so we can
+//      diagnose worker failures or backfill processing if the dispatch logic
+//      changes. Worker writes back `status` + `processedAt` + (on failure)
+//      `processingError` + `retryCount`.
+//
+// PK shape: surrogate `id` for FK ergonomics; the dedup contract lives on
+// the `(companyId, eventId)` UNIQUE index — `eventId` is LINE-assigned (UUID
+// shape) and globally unique in practice, but we scope dedup to companyId
+// to keep the index aligned with RLS and avoid a global hot-spot.
+//
+// `payload Json @db.JsonB` — JSONB for index-friendly partial reads later
+// (e.g. filtering by event.type without rehydrating the whole row).
+// =========================================================================
+
+enum WebhookEventStatus {
+  pending
+  processing
+  processed
+  failed
+
+  @@map("webhook_event_status")
+}
+
+model WebhookEvent {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String             @map("company_id") @db.Uuid
+  /** LINE-assigned event id. Globally unique in practice; we still scope dedup to companyId. */
+  eventId         String             @map("event_id") @db.VarChar(64)
+  /** LINE event type — message / follow / unfollow / postback / join / leave / memberJoined / etc. */
+  eventType       String             @map("event_type") @db.VarChar(32)
+  /** LINE channel the event arrived on. NOT a FK — channel rows can be re-issued; we keep the raw id. */
+  channelId       String             @map("channel_id") @db.VarChar(32)
+  /** LINE userId from `event.source.userId`. NULL for events without a user source (group events with no userId, etc.). */
+  lineUserId      String?            @map("line_user_id") @db.VarChar(64)
+  /** Raw LINE event payload. Keep as JSONB for partial-index potential + replay-friendly diagnostics. */
+  payload         Json               @db.JsonB
+  /** When LINE timestamps the event (epoch-ms in payload, parsed to timestamptz). */
+  eventTimestamp  DateTime           @map("event_timestamp") @db.Timestamptz(6)
+  /** When our webhook received the request. */
+  receivedAt      DateTime           @default(now()) @map("received_at") @db.Timestamptz(6)
+  /** Worker processing state. `pending` = enqueued, awaiting worker pickup. */
+  status          WebhookEventStatus @default(pending)
+  /** When worker finished (any terminal state — `processed` or `failed`). */
+  processedAt     DateTime?          @map("processed_at") @db.Timestamptz(6)
+  /** Truncated worker error for forensics. Capped at 1KB to avoid log-blob blowups. */
+  processingError String?            @map("processing_error") @db.VarChar(1024)
+  /** Worker retry attempt count — incremented per failed BullMQ attempt. */
+  retryCount      Int                @default(0) @map("retry_count") @db.SmallInt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Dedup contract — controller's INSERT relies on this UNIQUE for ON CONFLICT.
+  @@unique([companyId, eventId], name: "webhook_event_company_event_unique")
+  // Worker hot path: "give me the next pending event for this tenant, oldest first".
+  @@index([companyId, status, receivedAt])
+  // Diagnostics path: "show me everything that came in on this LINE channel".
+  @@index([channelId])
+  @@map("webhook_event")
 }

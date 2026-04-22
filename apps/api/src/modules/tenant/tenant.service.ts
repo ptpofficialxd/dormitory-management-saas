@@ -101,7 +101,9 @@ export class TenantService {
       const row = await prisma.tenant.create({
         data: {
           companyId: ctx.companyId,
-          lineUserId: input.lineUserId,
+          // Nullable since #41 — admin can pre-create a tenant before the
+          // human binds their LINE account via the invite-code flow.
+          lineUserId: input.lineUserId ?? null,
           displayName: input.displayName,
           pictureUrl: input.pictureUrl ?? null,
           nationalId: encNationalId,
@@ -113,7 +115,7 @@ export class TenantService {
       if (isUniqueConstraintError(err, 'lineUserId')) {
         throw new ConflictException({
           error: 'TenantLineUserTaken',
-          message: `LINE user ${input.lineUserId} is already a tenant in this company`,
+          message: `LINE user ${input.lineUserId ?? ''} is already a tenant in this company`,
         });
       }
       throw err;

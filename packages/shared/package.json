@@ -45,6 +45,8 @@
     }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist .turbo tsconfig.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "vitest --run",

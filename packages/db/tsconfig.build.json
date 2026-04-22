@@ -4,14 +4,12 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "noEmit": false,
+    "composite": true,
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "types": ["node"],
-    "paths": {
-      "@dorm/db": ["./src/index.ts"],
-      "@dorm/db/*": ["./src/*"]
-    }
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "vitest.config.ts"]

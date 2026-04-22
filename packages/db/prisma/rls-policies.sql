@@ -189,6 +189,25 @@ CREATE POLICY tenant_isolation ON company_line_channel
   USING (app_rls_bypass() OR company_id = app_current_company_id())
   WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
 
+-- ==== webhook_event ======================================================
+-- Webhook controller resolves channelId → companyId via the bypass-RLS
+-- CompanyLineChannel lookup, then SWITCHES into withTenant({companyId}) for
+-- the webhook_event INSERT. So under normal flow `app.company_id` is
+-- already set when this policy fires — no need to bypass RLS for the
+-- INSERT itself. Worker side: the BullMQ processor re-opens
+-- withTenant({companyId}) from the job payload before reading/updating the
+-- row, so RLS scopes the worker's writes the same way as any other
+-- service. `app_rls_bypass()` stays in the policy for ops/maintenance
+-- scripts that need to scan webhook_event across tenants (replay buffer
+-- diagnostics).
+ALTER TABLE webhook_event ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_event FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON webhook_event;
+CREATE POLICY tenant_isolation ON webhook_event
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
 -- -------------------------------------------------------------------------
 -- Append-only enforcement for audit_log (CLAUDE.md §3.7).
 -- UPDATE / DELETE are denied even by the bypass role.

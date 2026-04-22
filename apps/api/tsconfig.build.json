@@ -3,8 +3,27 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    "noEmit": false
+    "noEmit": false,
+    // Override paths from tsconfig.json: in build mode we resolve workspace
+    // packages through their *built* `.d.ts` declarations under `dist/`,
+    // not through their TS source. This keeps tsc from pulling source files
+    // into the program and tripping TS6059 (rootDir violation). Dev/test
+    // still use the source-pointing paths from tsconfig.json — fast HMR,
+    // no build step needed for unit tests.
+    "paths": {
+      "@dorm/db": ["../../packages/db/dist/index.d.ts"],
+      "@dorm/db/*": ["../../packages/db/dist/*"],
+      "@dorm/shared": ["../../packages/shared/dist/index.d.ts"],
+      "@dorm/shared/*": ["../../packages/shared/dist/*"]
+    }
   },
+  // Project references — `tsc -b` orchestrates: builds @dorm/shared and
+  // @dorm/db first (in dependency order), then apps/api. Each package's
+  // own tsconfig.build.json must have `composite: true`.
+  "references": [
+    { "path": "../../packages/shared/tsconfig.build.json" },
+    { "path": "../../packages/db/tsconfig.build.json" }
+  ],
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "test", "**/*.test.ts", "**/*.e2e-test.ts"]
 }

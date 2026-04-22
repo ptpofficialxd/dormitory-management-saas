@@ -15,7 +15,11 @@
       "**/.turbo",
       "**/coverage",
       "**/*.generated.*",
-      "**/prisma/migrations"
+      "**/prisma/migrations",
+      "**/src/**/*.js",
+      "**/src/**/*.js.map",
+      "**/src/**/*.d.ts",
+      "**/src/**/*.d.ts.map"
     ]
   },
   "formatter": {
@@ -85,6 +89,15 @@
           "suspicious": {
             "noExplicitAny": "off"
           }
+        }
+      }
+    },
+    {
+      "include": ["**/tsconfig*.json", "**/.vscode/*.json"],
+      "json": {
+        "parser": {
+          "allowComments": true,
+          "allowTrailingCommas": true
         }
       }
     }

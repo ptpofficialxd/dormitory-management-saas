@@ -25,8 +25,14 @@ export type TenantStatus = z.infer<typeof tenantStatusSchema>;
 export const tenantSchema = z.object({
   id: uuidSchema,
   companyId: companyIdSchema,
-  /** LINE `userId` from LIFF `getProfile()` — opaque up to 33 chars in practice. */
-  lineUserId: z.string().min(1).max(64),
+  /**
+   * LINE `userId` from LIFF `getProfile()` — opaque up to 33 chars in practice.
+   * Nullable since #41: admin may pre-create a tenant before the human ever
+   * opens the LIFF app; `lineUserId` is set later via the invite-code redeem
+   * flow. The Postgres unique index `(companyId, lineUserId)` keeps duplicate
+   * prevention because PG treats multiple NULLs as DISTINCT by default.
+   */
+  lineUserId: z.string().min(1).max(64).nullable(),
   displayName: z.string().min(1).max(128),
   pictureUrl: z.string().url().max(512).nullable(),
   nationalId: thaiNationalIdSchema.nullable(),
@@ -39,11 +45,12 @@ export type Tenant = z.infer<typeof tenantSchema>;
 
 /**
  * Input for `POST /tenants` — staff creating a tenant record ahead of the
- * LIFF onboarding flow. `lineUserId` becomes known the first time the tenant
- * opens the LIFF app and completes LINE Login.
+ * LIFF onboarding flow. `lineUserId` is optional because the admin creates
+ * the row first; the tenant later redeems an invite-code (Task #41) which
+ * binds the LINE userId. Both paths share this DTO.
  */
 export const createTenantInputSchema = z.object({
-  lineUserId: z.string().min(1).max(64),
+  lineUserId: z.string().min(1).max(64).optional(),
   displayName: z.string().min(1).max(128),
   pictureUrl: z.string().url().max(512).optional(),
   nationalId: thaiNationalIdSchema.optional(),

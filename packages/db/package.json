@@ -31,6 +31,8 @@
     "db:setup": "bun run migrate:init && bun run apply-rls && bun run apply-roles && bun run seed",
     "db:setup:test": "bun run apply-rls:test && bun run apply-roles:test && bun run seed:test",
     "db:reset:test": "bun run migrate:reset:test && bun run apply-rls:test && bun run apply-roles:test && bun run seed:test",
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist .turbo tsconfig.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "dotenv -e ../../.env.test -- vitest --run",

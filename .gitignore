@@ -18,6 +18,12 @@ out/
 .vercel/
 *.tsbuildinfo
 
+# Stale TSC artifacts that must NEVER appear in src/ (composite + outDir guard)
+**/src/**/*.js
+**/src/**/*.js.map
+**/src/**/*.d.ts
+**/src/**/*.d.ts.map
+
 # ============================================================
 # Test / coverage
 # ============================================================
