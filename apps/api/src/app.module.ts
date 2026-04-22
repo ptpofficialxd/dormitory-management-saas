@@ -12,6 +12,7 @@ import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
 import { ContractModule } from './modules/contract/contract.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { MeterModule } from './modules/meter/meter.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
 import { TenantModule } from './modules/tenant/tenant.module.js';
@@ -51,6 +52,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
     UnitModule,
     TenantModule,
     ContractModule,
+    MeterModule,
     BillingModule,
   ],
   providers: [

@@ -22,6 +22,7 @@ import {
   listAuditLogsInputSchema,
   listContractsQuerySchema,
   listInvoicesQuerySchema,
+  listMetersQuerySchema,
   listPropertiesQuerySchema,
   listTenantsQuerySchema,
   listUnitsQuerySchema,
@@ -1144,6 +1145,34 @@ describe('listTenantsQuerySchema', () => {
   it('accepts an opaque cursor string', () => {
     const parsed = listTenantsQuerySchema.parse({ cursor: 'eyJhIjoxfQ==', limit: 10 });
     expect(parsed.cursor).toBe('eyJhIjoxfQ==');
+  });
+});
+
+describe('listMetersQuerySchema', () => {
+  it('coerces string limit + applies default 20', () => {
+    expect(listMetersQuerySchema.parse({ limit: '50' }).limit).toBe(50);
+    expect(listMetersQuerySchema.parse({}).limit).toBe(20);
+  });
+
+  it('accepts optional unitId + kind filters', () => {
+    const parsed = listMetersQuerySchema.parse({
+      unitId: UUID_A,
+      kind: 'water',
+    });
+    expect(parsed.unitId).toBe(UUID_A);
+    expect(parsed.kind).toBe('water');
+  });
+
+  it('rejects non-UUID unitId', () => {
+    expect(listMetersQuerySchema.safeParse({ unitId: 'not-uuid' }).success).toBe(false);
+  });
+
+  it('rejects unknown kind enum', () => {
+    expect(listMetersQuerySchema.safeParse({ kind: 'gas' }).success).toBe(false);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listMetersQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
   });
 });
 

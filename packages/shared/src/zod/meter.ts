@@ -45,3 +45,15 @@ export const updateMeterInputSchema = z.object({
   ratePerUnit: rateSchema.optional(),
 });
 export type UpdateMeterInput = z.infer<typeof updateMeterInputSchema>;
+
+/**
+ * Query string for `GET /meters`. Filter by `unitId`/`kind` combine under AND;
+ * cursor + limit follow the standard pattern.
+ */
+export const listMetersQuerySchema = z.object({
+  unitId: uuidSchema.optional(),
+  kind: meterKindSchema.optional(),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListMetersQuery = z.infer<typeof listMetersQuerySchema>;
