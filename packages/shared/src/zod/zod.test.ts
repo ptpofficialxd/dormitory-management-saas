@@ -42,6 +42,9 @@ import {
   rateSchema,
   rejectPaymentInputSchema,
   slipMimeTypeSchema,
+  slipUploadUrlInputSchema,
+  slipUploadUrlResponseSchema,
+  slipViewUrlResponseSchema,
   slugSchema,
   tenantStatusSchema,
   unitStatusSchema,
@@ -678,10 +681,12 @@ describe('rejectPaymentInputSchema', () => {
 
 describe('uploadSlipInputSchema', () => {
   const VALID_SHA = 'a'.repeat(64);
+  const VALID_KEY = 'companies/11111111-1111-1111-8111-111111111111/slips/22222222-2222-2222-8222-222222222222/abc.jpg';
 
   it('accepts valid slip metadata', () => {
     expect(
       uploadSlipInputSchema.safeParse({
+        r2ObjectKey: VALID_KEY,
         mimeType: 'image/jpeg',
         sizeBytes: 500_000,
         sha256: VALID_SHA,
@@ -692,6 +697,7 @@ describe('uploadSlipInputSchema', () => {
   it('rejects unsupported MIME type', () => {
     expect(
       uploadSlipInputSchema.safeParse({
+        r2ObjectKey: VALID_KEY,
         mimeType: 'image/gif',
         sizeBytes: 500_000,
         sha256: VALID_SHA,
@@ -703,6 +709,7 @@ describe('uploadSlipInputSchema', () => {
   it('rejects uppercase hex SHA-256', () => {
     expect(
       uploadSlipInputSchema.safeParse({
+        r2ObjectKey: VALID_KEY,
         mimeType: 'image/jpeg',
         sizeBytes: 500_000,
         sha256: 'A'.repeat(64),
@@ -713,9 +720,122 @@ describe('uploadSlipInputSchema', () => {
   it('rejects oversized slip (>10MB)', () => {
     expect(
       uploadSlipInputSchema.safeParse({
+        r2ObjectKey: VALID_KEY,
         mimeType: 'image/jpeg',
         sizeBytes: 11 * 1024 * 1024,
         sha256: VALID_SHA,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects empty r2ObjectKey', () => {
+    expect(
+      uploadSlipInputSchema.safeParse({
+        r2ObjectKey: '',
+        mimeType: 'image/jpeg',
+        sizeBytes: 500_000,
+        sha256: VALID_SHA,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects r2ObjectKey longer than 512 chars', () => {
+    expect(
+      uploadSlipInputSchema.safeParse({
+        r2ObjectKey: 'a'.repeat(513),
+        mimeType: 'image/jpeg',
+        sizeBytes: 500_000,
+        sha256: VALID_SHA,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('slipUploadUrlInputSchema', () => {
+  it('accepts minimum valid input', () => {
+    expect(
+      slipUploadUrlInputSchema.safeParse({
+        mimeType: 'application/pdf',
+        sizeBytes: 1024,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects unsupported MIME type', () => {
+    expect(
+      slipUploadUrlInputSchema.safeParse({
+        mimeType: 'image/gif',
+        sizeBytes: 1024,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects zero / negative sizeBytes', () => {
+    expect(
+      slipUploadUrlInputSchema.safeParse({ mimeType: 'image/jpeg', sizeBytes: 0 }).success,
+    ).toBe(false);
+    expect(
+      slipUploadUrlInputSchema.safeParse({ mimeType: 'image/jpeg', sizeBytes: -1 }).success,
+    ).toBe(false);
+  });
+
+  it('rejects oversized claim (>10MB)', () => {
+    expect(
+      slipUploadUrlInputSchema.safeParse({
+        mimeType: 'image/jpeg',
+        sizeBytes: 11 * 1024 * 1024,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('slipUploadUrlResponseSchema', () => {
+  it('accepts a fully-formed signed-URL response', () => {
+    expect(
+      slipUploadUrlResponseSchema.safeParse({
+        url: 'https://acme.r2.cloudflarestorage.com/dorm-bucket/companies/abc/slips/def/x.jpg?X-Amz-Signature=...',
+        r2ObjectKey: 'companies/abc/slips/def/x.jpg',
+        expiresAt: '2026-04-22T10:30:00Z',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects non-URL `url`', () => {
+    expect(
+      slipUploadUrlResponseSchema.safeParse({
+        url: 'not-a-url',
+        r2ObjectKey: 'k',
+        expiresAt: '2026-04-22T10:30:00Z',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects expiresAt without UTC `Z` suffix', () => {
+    expect(
+      slipUploadUrlResponseSchema.safeParse({
+        url: 'https://example.com/x',
+        r2ObjectKey: 'k',
+        expiresAt: '2026-04-22T10:30:00+07:00',
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('slipViewUrlResponseSchema', () => {
+  it('accepts a fully-formed signed-URL response', () => {
+    expect(
+      slipViewUrlResponseSchema.safeParse({
+        url: 'https://acme.r2.cloudflarestorage.com/dorm-bucket/path?sig=abc',
+        expiresAt: '2026-04-22T10:30:00Z',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects malformed url', () => {
+    expect(
+      slipViewUrlResponseSchema.safeParse({
+        url: '/relative/path',
+        expiresAt: '2026-04-22T10:30:00Z',
       }).success,
     ).toBe(false);
   });
