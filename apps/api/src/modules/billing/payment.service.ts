@@ -106,6 +106,23 @@ export class PaymentService {
    * `tenantId` is sourced from the Invoice (NOT trusted from the caller) so
    * an admin-driven cash-payment record can't be misattributed to a foreign
    * tenant.
+   *
+   * Idempotency implementation:
+   *   1. Pre-check via `findFirst` — covers ALL replay cases (POSTs in
+   *      separate requests). The replayed POST always finds the prior row
+   *      and short-circuits; INSERT is never attempted.
+   *   2. SAVEPOINT around `create()` — defends against the rare TRUE race:
+   *      two concurrent POSTs with the same key. Without the savepoint, a
+   *      P2002 unique violation puts the OUTER request tx into Postgres
+   *      state 25P02 (`current transaction is aborted, commands ignored`),
+   *      which would then fail the catch-block's `findFirst` lookup AND
+   *      the audit-log interceptor's insert (cascading to a 500 even
+   *      though the row exists).
+   *
+   * Why pre-check (vs. catch-only)? The original "INSERT then catch P2002"
+   * pattern works on databases that allow continued queries after a
+   * constraint violation. Postgres aborts the tx instead — so the catch
+   * path is unreachable without explicit recovery (SAVEPOINT or new tx).
    */
   async create(input: CreatePaymentInput, idempotencyKey: string): Promise<Payment> {
     const ctx = getTenantContext();
@@ -151,6 +168,16 @@ export class PaymentService {
       });
     }
 
+    // Step 1 — fast-path pre-check. Inside the request tx, RLS scopes the
+    // lookup to this tenant; `idempotencyKey` is unique within companyId.
+    const replay = await prisma.payment.findFirst({
+      where: { idempotencyKey },
+    });
+    if (replay) return replay as unknown as Payment;
+
+    // Step 2 — guarded INSERT. SAVEPOINT lets us recover the outer tx if a
+    // concurrent request committed the same key between Step 1 and here.
+    await prisma.$executeRawUnsafe('SAVEPOINT idempotent_payment_create');
     try {
       const row = await prisma.payment.create({
         data: {
@@ -164,11 +191,13 @@ export class PaymentService {
           idempotencyKey,
         },
       });
+      await prisma.$executeRawUnsafe('RELEASE SAVEPOINT idempotent_payment_create');
       return row as unknown as Payment;
     } catch (err) {
-      // Idempotent replay path: the same `(companyId, idempotencyKey)` pair
-      // was already persisted. Look up + return the original row so the
-      // caller observes a successful "create" without a duplicate side-effect.
+      // Roll the failed INSERT back to the savepoint — clears the 25P02
+      // abort flag so the outer request tx can keep going (audit-log
+      // interceptor still needs to insert, and the response must commit).
+      await prisma.$executeRawUnsafe('ROLLBACK TO SAVEPOINT idempotent_payment_create');
       if (isUniqueConstraintError(err, ['company_id', 'idempotency_key'])) {
         const existing = await prisma.payment.findFirst({
           where: { idempotencyKey },
@@ -184,9 +213,18 @@ export class PaymentService {
    * unchanged); refuses on `rejected` (must POST a new payment with a fresh
    * idempotency key — no re-deciding old rows).
    *
-   * Recomputes Invoice rollup status in the SAME transaction. We use an
-   * interactive transaction so the rollup query sees the just-written
-   * Payment row (READ COMMITTED + tx isolation gives that guarantee).
+   * Recomputes Invoice rollup status in the SAME transaction as the update.
+   * Atomicity comes from the OUTER `withTenant()` tx opened by
+   * `TenantContextInterceptor` at the request boundary — every `prisma.*`
+   * call inside the request routes through that single interactive tx via
+   * ALS (see `packages/db/src/client.ts`). We deliberately do NOT open a
+   * nested `prisma.$transaction()` here:
+   *   • `prisma` inside `withTenant()` resolves to a `TransactionClient`,
+   *     which does NOT expose `$transaction` (Prisma constraint).
+   *   • Calling it would throw `prisma.$transaction is not a function`,
+   *     bubbling up as a 500 to the caller.
+   * Direct script callers (outside any request) MUST wrap their own
+   * `withTenant()` boundary — that's the contract.
    */
   async confirm(id: string, confirmedByUserId: string, _note?: string): Promise<Payment> {
     const existing = await this.getById(id);
@@ -206,20 +244,17 @@ export class PaymentService {
     // signature is self-documenting; the parameter is intentionally unused.
     void _note;
 
-    const updated = await prisma.$transaction(async (tx) => {
-      const payment = await tx.payment.update({
-        where: { id },
-        data: {
-          status: 'confirmed',
-          confirmedAt: new Date(),
-          confirmedByUserId,
-        },
-      });
-      await this.recomputeInvoiceStatus(tx, payment.invoiceId);
-      return payment;
+    const payment = await prisma.payment.update({
+      where: { id },
+      data: {
+        status: 'confirmed',
+        confirmedAt: new Date(),
+        confirmedByUserId,
+      },
     });
+    await this.recomputeInvoiceStatus(payment.invoiceId);
 
-    return updated as unknown as Payment;
+    return payment as unknown as Payment;
   }
 
   /**
@@ -259,7 +294,9 @@ export class PaymentService {
 
   /**
    * Recompute Invoice.status from the sum of confirmed payments. Called
-   * inside a transaction on every confirm() so the rollup is atomic.
+   * after a confirm() update — atomicity is provided by the OUTER
+   * `withTenant()` tx (TenantContextInterceptor) since every `prisma.*`
+   * call here routes through that single interactive tx via ALS.
    *
    * Rules:
    *   - `paid_total >= invoice.total` → 'paid'
@@ -271,18 +308,15 @@ export class PaymentService {
    * in the first place (create() blocks it), but if a race made it through
    * we don't want to flip a void invoice back to paid.
    */
-  private async recomputeInvoiceStatus(
-    tx: Prisma.TransactionClient,
-    invoiceId: string,
-  ): Promise<void> {
-    const invoice = await tx.invoice.findUnique({
+  private async recomputeInvoiceStatus(invoiceId: string): Promise<void> {
+    const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
       select: { id: true, total: true, status: true },
     });
     if (!invoice) return; // FK should make this unreachable, but defensive.
     if (invoice.status === 'void') return;
 
-    const confirmedPayments = await tx.payment.findMany({
+    const confirmedPayments = await prisma.payment.findMany({
       where: { invoiceId, status: 'confirmed' },
       select: { amount: true },
     });
@@ -298,7 +332,7 @@ export class PaymentService {
     else if (Number.parseFloat(paidTotal) > 0) nextStatus = 'partially_paid';
 
     if (nextStatus && nextStatus !== invoice.status) {
-      await tx.invoice.update({
+      await prisma.invoice.update({
         where: { id: invoiceId },
         data: { status: nextStatus },
       });
@@ -310,12 +344,26 @@ export class PaymentService {
  * Detect Prisma P2002 unique-constraint violations on a specific column tuple.
  * `target` is either a string (single col) or string[] (composite). We accept
  * either ordering — Prisma sometimes reorders composite targets internally.
+ *
+ * Defensive fallback: if `meta.target` is missing, `null`, or the literal
+ * sentinel `"(not available)"` (Prisma can't introspect the constraint name
+ * — happens with composite unique indexes under RLS), we still return `true`
+ * for any P2002. The caller is responsible for confirming the match via a
+ * follow-up `findFirst` lookup; if no row comes back, it must rethrow.
+ *
+ * Why permissive? On `Payment.create()` the only realistic P2002 sources are:
+ *   1. `(company_id, idempotency_key)` composite — IDEMPOTENCY ✓
+ *   2. `id` PK collision (UUID v4 — astronomically unlikely)
+ * So treating an opaque P2002 as an idempotency hit is safe in practice and
+ * lets the lookup decide.
  */
 function isUniqueConstraintError(err: unknown, columns: string[]): boolean {
   if (!err || typeof err !== 'object') return false;
   const e = err as { code?: string; meta?: { target?: unknown } };
   if (e.code !== 'P2002') return false;
   const target = e.meta?.target;
+  // Opaque target → defer to caller's lookup.
+  if (target == null || target === '(not available)') return true;
   if (Array.isArray(target)) return columns.every((c) => target.some((t) => String(t).includes(c)));
   return typeof target === 'string' && columns.every((c) => target.includes(c));
 }

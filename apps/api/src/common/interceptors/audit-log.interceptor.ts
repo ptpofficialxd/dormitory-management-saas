@@ -8,7 +8,7 @@ import {
   type NestInterceptor,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { type Observable, tap } from 'rxjs';
+import { type Observable, mergeMap } from 'rxjs';
 
 /**
  * Writes an `audit_log` row for every mutating request (POST/PUT/PATCH/DELETE)
@@ -21,8 +21,20 @@ import { type Observable, tap } from 'rxjs';
  * set `app.company_id` on the active tx — otherwise the INSERT would hit
  * default-deny and fail.
  *
+ * Why `mergeMap(async)` instead of `tap({ next: async })`?
+ *   `tap` fires async callbacks fire-and-forget — the observable emits its
+ *   value BEFORE the await resolves. That lets `TenantContextInterceptor`'s
+ *   `firstValueFromHandler` resolve, `withTenant` returns, the request tx
+ *   commits — and only THEN does our audit `INSERT` finally execute against
+ *   a now-closed tx ("Transaction already closed"). `mergeMap` awaits the
+ *   inner promise before emitting, so the audit insert happens INSIDE the
+ *   same active tx as the request handler — RLS sees `app.company_id` and
+ *   both writes commit atomically.
+ *
  * On write failure (e.g. DB down) we log-and-swallow — we'd rather ship the
  * response than fail the user's action because the audit log is unreachable.
+ * Note: a Postgres-level error inside the tx will still abort it on COMMIT,
+ * which is actually the correct behaviour for transactional auditability.
  * Observability + alerting will catch persistent failures.
  */
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -50,27 +62,26 @@ export class AuditLogInterceptor implements NestInterceptor {
     const userAgent = (req.headers['user-agent'] as string | undefined) ?? null;
 
     return next.handle().pipe(
-      tap({
-        next: async () => {
-          try {
-            await prisma.auditLog.create({
-              data: {
-                companyId: user.companyId,
-                actorUserId: user.sub,
-                action: `${req.method} ${req.routeOptions?.url ?? req.url}`,
-                resource: deriveResource(req.url),
-                resourceId: null,
-                metadata: {},
-                ipAddress: ip,
-                userAgent,
-              },
-            });
-          } catch (err) {
-            this.logger.error(
-              `Failed to write audit_log for ${req.method} ${req.url}: ${(err as Error).message}`,
-            );
-          }
-        },
+      mergeMap(async (value) => {
+        try {
+          await prisma.auditLog.create({
+            data: {
+              companyId: user.companyId,
+              actorUserId: user.sub,
+              action: `${req.method} ${req.routeOptions?.url ?? req.url}`,
+              resource: deriveResource(req.url),
+              resourceId: null,
+              metadata: {},
+              ipAddress: ip,
+              userAgent,
+            },
+          });
+        } catch (err) {
+          this.logger.error(
+            `Failed to write audit_log for ${req.method} ${req.url}: ${(err as Error).message}`,
+          );
+        }
+        return value;
       }),
     );
   }
