@@ -10,6 +10,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { PropertyModule } from './modules/property/property.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
 
 /**
@@ -36,7 +37,7 @@ import { StorageModule } from './modules/storage/storage.module.js';
  * To require roles: decorate with `@Roles('company_owner', 'property_manager')`.
  */
 @Module({
-  imports: [StorageModule, HealthModule, AuthModule, CompanyModule, BillingModule],
+  imports: [StorageModule, HealthModule, AuthModule, CompanyModule, PropertyModule, BillingModule],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: JwtGuard },

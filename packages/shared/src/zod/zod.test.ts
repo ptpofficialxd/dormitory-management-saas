@@ -21,6 +21,7 @@ import {
   lineWebhookPayloadSchema,
   listAuditLogsInputSchema,
   listInvoicesQuerySchema,
+  listPropertiesQuerySchema,
   loginAdminInputSchema,
   loginLiffInputSchema,
   maintenanceCategorySchema,
@@ -1024,6 +1025,35 @@ describe('lineWebhookPayloadSchema', () => {
       ],
     };
     expect(lineWebhookPayloadSchema.safeParse(payload).success).toBe(false);
+  });
+});
+
+describe('listPropertiesQuerySchema', () => {
+  it('coerces string limit (query strings are always strings)', () => {
+    const parsed = listPropertiesQuerySchema.parse({ limit: '50' });
+    expect(parsed.limit).toBe(50);
+  });
+
+  it('defaults limit to 20 when omitted', () => {
+    const parsed = listPropertiesQuerySchema.parse({});
+    expect(parsed.limit).toBe(20);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listPropertiesQuerySchema.safeParse({ limit: 500 }).success).toBe(false);
+  });
+
+  it('rejects limit < 1', () => {
+    expect(listPropertiesQuerySchema.safeParse({ limit: 0 }).success).toBe(false);
+  });
+
+  it('accepts an opaque cursor string', () => {
+    const parsed = listPropertiesQuerySchema.parse({ cursor: 'eyJhIjoxfQ==', limit: 10 });
+    expect(parsed.cursor).toBe('eyJhIjoxfQ==');
+  });
+
+  it('rejects cursor longer than 512 chars', () => {
+    expect(listPropertiesQuerySchema.safeParse({ cursor: 'x'.repeat(513) }).success).toBe(false);
   });
 });
 
