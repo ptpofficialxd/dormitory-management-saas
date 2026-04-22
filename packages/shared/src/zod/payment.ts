@@ -66,3 +66,25 @@ export const rejectPaymentInputSchema = z.object({
   rejectionReason: z.string().min(1).max(512),
 });
 export type RejectPaymentInput = z.infer<typeof rejectPaymentInputSchema>;
+
+// =========================================================================
+// List / search — admin dashboard + LIFF tenant own-payments view
+// =========================================================================
+
+/**
+ * Query for `GET /c/:slug/payments`. All filters AND-combined.
+ *
+ * `tenantId` is enforced by the controller for LIFF callers (they may only
+ * see their own); admin callers may pass any value within the company.
+ *
+ * `cursor` is opaque base64 of `(createdAt, id)` per CLAUDE.md pagination
+ * pattern — service decodes/encodes, callers treat it as a string.
+ */
+export const listPaymentsQuerySchema = z.object({
+  status: paymentStatusSchema.optional(),
+  invoiceId: uuidSchema.optional(),
+  tenantId: uuidSchema.optional(),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListPaymentsQuery = z.infer<typeof listPaymentsQuerySchema>;

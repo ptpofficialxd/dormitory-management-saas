@@ -23,6 +23,7 @@ import {
   listContractsQuerySchema,
   listInvoicesQuerySchema,
   listMetersQuerySchema,
+  listPaymentsQuerySchema,
   listPropertiesQuerySchema,
   listReadingsQuerySchema,
   listTenantsQuerySchema,
@@ -1204,6 +1205,37 @@ describe('listReadingsQuerySchema', () => {
 
   it('rejects limit > 100 (DoS guard)', () => {
     expect(listReadingsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
+  });
+});
+
+describe('listPaymentsQuerySchema', () => {
+  it('coerces string limit + applies default 20', () => {
+    expect(listPaymentsQuerySchema.parse({ limit: '50' }).limit).toBe(50);
+    expect(listPaymentsQuerySchema.parse({}).limit).toBe(20);
+  });
+
+  it('accepts optional status / invoiceId / tenantId filters', () => {
+    const parsed = listPaymentsQuerySchema.parse({
+      status: 'pending',
+      invoiceId: UUID_A,
+      tenantId: UUID_B,
+    });
+    expect(parsed.status).toBe('pending');
+    expect(parsed.invoiceId).toBe(UUID_A);
+    expect(parsed.tenantId).toBe(UUID_B);
+  });
+
+  it('rejects invalid status', () => {
+    expect(listPaymentsQuerySchema.safeParse({ status: 'totally_paid' }).success).toBe(false);
+  });
+
+  it('rejects non-UUID invoiceId / tenantId', () => {
+    expect(listPaymentsQuerySchema.safeParse({ invoiceId: 'not-uuid' }).success).toBe(false);
+    expect(listPaymentsQuerySchema.safeParse({ tenantId: 'not-uuid' }).success).toBe(false);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listPaymentsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
   });
 });
 
