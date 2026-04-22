@@ -52,3 +52,16 @@ export const updateReadingInputSchema = z.object({
   readAt: isoUtcSchema.optional(),
 });
 export type UpdateReadingInput = z.infer<typeof updateReadingInputSchema>;
+
+/**
+ * Query string for `GET /readings`. Filter by `meterId`/`period` combine
+ * under AND; cursor + limit follow the standard pattern. `period` filter
+ * is exact-match (`YYYY-MM`) — Phase 2 will add range filtering.
+ */
+export const listReadingsQuerySchema = z.object({
+  meterId: uuidSchema.optional(),
+  period: periodSchema.optional(),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListReadingsQuery = z.infer<typeof listReadingsQuerySchema>;

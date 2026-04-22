@@ -24,6 +24,7 @@ import {
   listInvoicesQuerySchema,
   listMetersQuerySchema,
   listPropertiesQuerySchema,
+  listReadingsQuerySchema,
   listTenantsQuerySchema,
   listUnitsQuerySchema,
   loginAdminInputSchema,
@@ -1173,6 +1174,36 @@ describe('listMetersQuerySchema', () => {
 
   it('rejects limit > 100 (DoS guard)', () => {
     expect(listMetersQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
+  });
+});
+
+describe('listReadingsQuerySchema', () => {
+  it('coerces string limit + applies default 20', () => {
+    expect(listReadingsQuerySchema.parse({ limit: '50' }).limit).toBe(50);
+    expect(listReadingsQuerySchema.parse({}).limit).toBe(20);
+  });
+
+  it('accepts optional meterId + period filters', () => {
+    const parsed = listReadingsQuerySchema.parse({
+      meterId: UUID_A,
+      period: '2026-04',
+    });
+    expect(parsed.meterId).toBe(UUID_A);
+    expect(parsed.period).toBe('2026-04');
+  });
+
+  it('rejects malformed period (must be YYYY-MM)', () => {
+    expect(listReadingsQuerySchema.safeParse({ period: '2026-4' }).success).toBe(false);
+    expect(listReadingsQuerySchema.safeParse({ period: '2026-13' }).success).toBe(false);
+    expect(listReadingsQuerySchema.safeParse({ period: '2026-04-01' }).success).toBe(false);
+  });
+
+  it('rejects non-UUID meterId', () => {
+    expect(listReadingsQuerySchema.safeParse({ meterId: 'not-uuid' }).success).toBe(false);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listReadingsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
   });
 });
 
