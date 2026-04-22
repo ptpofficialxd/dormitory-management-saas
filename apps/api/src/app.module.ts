@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { CryptoModule } from './common/crypto/crypto.module.js';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter.js';
 import { JwtGuard } from './common/guards/jwt.guard.js';
 import { PathCompanyGuard } from './common/guards/path-company.guard.js';
@@ -12,6 +13,7 @@ import { CompanyModule } from './modules/company/company.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
+import { TenantModule } from './modules/tenant/tenant.module.js';
 import { UnitModule } from './modules/unit/unit.module.js';
 
 /**
@@ -39,12 +41,14 @@ import { UnitModule } from './modules/unit/unit.module.js';
  */
 @Module({
   imports: [
+    CryptoModule,
     StorageModule,
     HealthModule,
     AuthModule,
     CompanyModule,
     PropertyModule,
     UnitModule,
+    TenantModule,
     BillingModule,
   ],
   providers: [

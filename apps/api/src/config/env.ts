@@ -54,6 +54,20 @@ const envSchema = z.object({
    */
   R2_SIGNED_URL_TTL: z.coerce.number().int().min(30).max(3600).default(300),
 
+  // ---- PII encryption (pgcrypto) --------------------------------------
+  /**
+   * Symmetric key for `pgp_sym_encrypt` / `pgp_sym_decrypt` over PII columns
+   * (`tenant.national_id`, `tenant.phone`, …) per CLAUDE.md §3.8. ≥32 chars.
+   *
+   * Operational notes:
+   *   - Lives in the API process env ONLY. NEVER stored in the DB.
+   *   - Backups of the DB without this key are useless — the encrypted columns
+   *     are opaque ciphertext.
+   *   - Rotation = re-encrypt every row with the new key (Phase 2 migration).
+   *     There is no on-the-fly key versioning in MVP.
+   */
+  PII_ENCRYPTION_KEY: z.string().min(32, 'PII_ENCRYPTION_KEY must be ≥ 32 chars'),
+
   // ---- Observability --------------------------------------------------
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });

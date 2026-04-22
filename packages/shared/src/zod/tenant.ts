@@ -55,3 +55,16 @@ export const updateTenantInputSchema = createTenantInputSchema
   .partial()
   .extend({ status: tenantStatusSchema.optional() });
 export type UpdateTenantInput = z.infer<typeof updateTenantInputSchema>;
+
+/**
+ * Query string for `GET /tenants`. `limit` is `z.coerce.number()` because
+ * query params arrive as strings on the wire — `?limit=20` would otherwise
+ * fail Zod parsing. Filter by `status` (active / moved_out / blocked) to let
+ * the admin UI segment the directory.
+ */
+export const listTenantsQuerySchema = z.object({
+  status: tenantStatusSchema.optional(),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type ListTenantsQuery = z.infer<typeof listTenantsQuerySchema>;

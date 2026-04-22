@@ -22,6 +22,7 @@ import {
   listAuditLogsInputSchema,
   listInvoicesQuerySchema,
   listPropertiesQuerySchema,
+  listTenantsQuerySchema,
   listUnitsQuerySchema,
   loginAdminInputSchema,
   loginLiffInputSchema,
@@ -1085,6 +1086,31 @@ describe('listUnitsQuerySchema', () => {
 
   it('rejects limit > 100 (DoS guard)', () => {
     expect(listUnitsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
+  });
+});
+
+describe('listTenantsQuerySchema', () => {
+  it('coerces string limit + applies default 20', () => {
+    expect(listTenantsQuerySchema.parse({ limit: '50' }).limit).toBe(50);
+    expect(listTenantsQuerySchema.parse({}).limit).toBe(20);
+  });
+
+  it('accepts optional status filter', () => {
+    const parsed = listTenantsQuerySchema.parse({ status: 'moved_out', limit: '10' });
+    expect(parsed.status).toBe('moved_out');
+  });
+
+  it('rejects unknown status enum values', () => {
+    expect(listTenantsQuerySchema.safeParse({ status: 'pending' }).success).toBe(false);
+  });
+
+  it('rejects limit > 100 (DoS guard)', () => {
+    expect(listTenantsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
+  });
+
+  it('accepts an opaque cursor string', () => {
+    const parsed = listTenantsQuerySchema.parse({ cursor: 'eyJhIjoxfQ==', limit: 10 });
+    expect(parsed.cursor).toBe('eyJhIjoxfQ==');
   });
 });
 
