@@ -3,6 +3,7 @@ import {
   announcementAudienceSchema,
   announcementStatusSchema,
   auditLogSchema,
+  batchGenerateInvoicesInputSchema,
   companyStatusSchema,
   contractStatusSchema,
   createAnnouncementInputSchema,
@@ -16,8 +17,10 @@ import {
   createTenantInputSchema,
   createUnitInputSchema,
   invoiceItemKindSchema,
+  issueInvoiceInputSchema,
   lineWebhookPayloadSchema,
   listAuditLogsInputSchema,
+  listInvoicesQuerySchema,
   loginAdminInputSchema,
   loginLiffInputSchema,
   maintenanceCategorySchema,
@@ -27,6 +30,8 @@ import {
   meterValueSchema,
   moneySchema,
   periodSchema,
+  promptPayIdSchema,
+  promptPayNameSchema,
   rateSchema,
   rejectPaymentInputSchema,
   slipMimeTypeSchema,
@@ -34,8 +39,10 @@ import {
   tenantStatusSchema,
   unitStatusSchema,
   updateMaintenanceRequestInputSchema,
+  updatePromptPaySettingsInputSchema,
   uploadSlipInputSchema,
   uuidSchema,
+  voidInvoiceInputSchema,
   writeAuditLogInputSchema,
 } from './index.js';
 
@@ -172,6 +179,82 @@ describe('createCompanyInputSchema', () => {
   it('rejects 129-char name', () => {
     expect(
       createCompanyInputSchema.safeParse({ slug: 'acme', name: 'x'.repeat(129) }).success,
+    ).toBe(false);
+  });
+});
+
+// =========================================================================
+// PromptPay — IDs, merchant name, settings input
+// =========================================================================
+
+describe('promptPayIdSchema', () => {
+  it.each([
+    ['0812345678', true], // 10-digit phone starting with 0
+    ['1234567890123', true], // 13-digit national ID
+    ['123456789012345', true], // 15-digit e-wallet
+    ['1234567890', false], // 10 digits but doesn't start with 0
+    ['081234567', false], // 9 digits
+    ['08123456789', false], // 11 digits — neither phone nor ID
+    ['12345678901234', false], // 14 digits
+    ['1234567890123456', false], // 16 digits
+    ['081-234-5678', false], // hyphens not allowed (canonical form only)
+    ['0812 345 678', false], // spaces not allowed
+    ['', false],
+  ])('promptPayIdSchema("%s") → %s', (input, expected) => {
+    expect(promptPayIdSchema.safeParse(input).success).toBe(expected);
+  });
+});
+
+describe('promptPayNameSchema', () => {
+  it('accepts ASCII trading name within 25 chars', () => {
+    expect(promptPayNameSchema.safeParse('DORM ACME').success).toBe(true);
+    expect(promptPayNameSchema.safeParse('A').success).toBe(true);
+    expect(promptPayNameSchema.safeParse('x'.repeat(25)).success).toBe(true);
+  });
+
+  it('rejects empty string and >25 chars (EMVCo tag 59 limit)', () => {
+    expect(promptPayNameSchema.safeParse('').success).toBe(false);
+    expect(promptPayNameSchema.safeParse('x'.repeat(26)).success).toBe(false);
+  });
+
+  it('rejects non-printable / non-ASCII (Thai glyphs render as boxes)', () => {
+    expect(promptPayNameSchema.safeParse('หอพัก ACME').success).toBe(false);
+    expect(promptPayNameSchema.safeParse('DORM\nACME').success).toBe(false); // newline
+    expect(promptPayNameSchema.safeParse('DORM\tACME').success).toBe(false); // tab
+  });
+
+  it('accepts symbols and digits commonly used in trading names', () => {
+    expect(promptPayNameSchema.safeParse('DORM-ACME 2026').success).toBe(true);
+    expect(promptPayNameSchema.safeParse('A&B Co., Ltd.').success).toBe(true);
+  });
+});
+
+describe('updatePromptPaySettingsInputSchema', () => {
+  it('requires both promptPayId AND promptPayName', () => {
+    expect(
+      updatePromptPaySettingsInputSchema.safeParse({
+        promptPayId: '0812345678',
+        promptPayName: 'DORM ACME',
+      }).success,
+    ).toBe(true);
+
+    // Missing name — half-configured PromptPay is forbidden
+    expect(
+      updatePromptPaySettingsInputSchema.safeParse({ promptPayId: '0812345678' }).success,
+    ).toBe(false);
+
+    // Missing ID
+    expect(
+      updatePromptPaySettingsInputSchema.safeParse({ promptPayName: 'DORM ACME' }).success,
+    ).toBe(false);
+  });
+
+  it('rejects invalid PromptPay ID even if name is valid', () => {
+    expect(
+      updatePromptPaySettingsInputSchema.safeParse({
+        promptPayId: 'not-digits',
+        promptPayName: 'DORM ACME',
+      }).success,
     ).toBe(false);
   });
 });
@@ -413,6 +496,141 @@ describe('createInvoiceInputSchema', () => {
         items: [{ kind: 'mystery', description: 'x', quantity: '1', unitPrice: '0' }],
       }).success,
     ).toBe(false);
+  });
+});
+
+// =========================================================================
+// Invoice batch generation + lifecycle
+// =========================================================================
+
+describe('batchGenerateInvoicesInputSchema', () => {
+  it('accepts minimum input (period + dueDayOfMonth)', () => {
+    expect(
+      batchGenerateInvoicesInputSchema.safeParse({
+        period: '2026-04',
+        dueDayOfMonth: 5,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts optional propertyId + additionalItems', () => {
+    expect(
+      batchGenerateInvoicesInputSchema.safeParse({
+        period: '2026-04',
+        dueDayOfMonth: 10,
+        propertyId: UUID_A,
+        additionalItems: [
+          { kind: 'common_fee', description: 'Common fee', quantity: '1', unitPrice: '300.00' },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    [0, false], // Invalid — day 0 doesn't exist
+    [1, true],
+    [28, true], // Boundary — Feb-safe
+    [29, false], // Feb-30 trap
+    [31, false],
+  ])('dueDayOfMonth %d → %s', (day, expected) => {
+    expect(
+      batchGenerateInvoicesInputSchema.safeParse({
+        period: '2026-04',
+        dueDayOfMonth: day,
+      }).success,
+    ).toBe(expected);
+  });
+
+  it('rejects additionalItem with water/electric/late_fee/rent (handled by service)', () => {
+    for (const kind of ['water', 'electric', 'late_fee', 'rent']) {
+      expect(
+        batchGenerateInvoicesInputSchema.safeParse({
+          period: '2026-04',
+          dueDayOfMonth: 5,
+          additionalItems: [{ kind, description: 'x', quantity: '1', unitPrice: '100.00' }],
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('rejects >10 additionalItems (DoS guard)', () => {
+    const items = Array.from({ length: 11 }, () => ({
+      kind: 'other' as const,
+      description: 'x',
+      quantity: '1',
+      unitPrice: '1.00',
+    }));
+    expect(
+      batchGenerateInvoicesInputSchema.safeParse({
+        period: '2026-04',
+        dueDayOfMonth: 5,
+        additionalItems: items,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects malformed period', () => {
+    expect(
+      batchGenerateInvoicesInputSchema.safeParse({
+        period: '2026/04',
+        dueDayOfMonth: 5,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('issueInvoiceInputSchema', () => {
+  it('accepts empty body', () => {
+    expect(issueInvoiceInputSchema.safeParse({}).success).toBe(true);
+  });
+
+  it('rejects unknown extra fields (.strict() guard)', () => {
+    expect(issueInvoiceInputSchema.safeParse({ status: 'paid' }).success).toBe(false);
+  });
+});
+
+describe('voidInvoiceInputSchema', () => {
+  it('requires reason ≥4 chars (avoid noise like "x")', () => {
+    expect(voidInvoiceInputSchema.safeParse({ reason: 'x' }).success).toBe(false);
+    expect(voidInvoiceInputSchema.safeParse({ reason: 'oops' }).success).toBe(true);
+  });
+
+  it('rejects reason >512 chars', () => {
+    expect(voidInvoiceInputSchema.safeParse({ reason: 'x'.repeat(513) }).success).toBe(false);
+  });
+
+  it('rejects missing reason', () => {
+    expect(voidInvoiceInputSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe('listInvoicesQuerySchema', () => {
+  it('defaults limit to 20 when omitted', () => {
+    const r = listInvoicesQuerySchema.safeParse({});
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.limit).toBe(20);
+  });
+
+  it('coerces string limit (query string is always string)', () => {
+    const r = listInvoicesQuerySchema.safeParse({ limit: '50' });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.limit).toBe(50);
+  });
+
+  it('rejects limit >100 (pagination DoS guard)', () => {
+    expect(listInvoicesQuerySchema.safeParse({ limit: 101 }).success).toBe(false);
+  });
+
+  it('accepts all filters together', () => {
+    expect(
+      listInvoicesQuerySchema.safeParse({
+        status: 'issued',
+        period: '2026-04',
+        tenantId: UUID_A,
+        cursor: 'opaque-cursor',
+        limit: 20,
+      }).success,
+    ).toBe(true);
   });
 });
 

@@ -7,8 +7,10 @@ import { RbacGuard } from './common/guards/rbac.guard.js';
 import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor.js';
 import { TenantContextInterceptor } from './common/middleware/tenant-context.interceptor.js';
 import { AuthModule } from './modules/auth/auth.module.js';
+import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
 import { HealthModule } from './modules/health/health.module.js';
+import { StorageModule } from './modules/storage/storage.module.js';
 
 /**
  * Root module — wires global cross-cutting concerns once.
@@ -34,7 +36,7 @@ import { HealthModule } from './modules/health/health.module.js';
  * To require roles: decorate with `@Roles('company_owner', 'property_manager')`.
  */
 @Module({
-  imports: [HealthModule, AuthModule, CompanyModule],
+  imports: [StorageModule, HealthModule, AuthModule, CompanyModule, BillingModule],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: JwtGuard },

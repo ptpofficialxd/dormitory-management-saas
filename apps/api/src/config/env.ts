@@ -30,6 +30,30 @@ const envSchema = z.object({
   /** Refresh-token TTL. */
   JWT_REFRESH_TTL: z.string().default('30d'),
 
+  // ---- Cloudflare R2 (S3-compatible private object storage) -----------
+  /**
+   * R2 endpoint is derived from account ID:
+   *   https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+   * Account ID is the 32-char hex string from the R2 dashboard URL.
+   */
+  R2_ACCOUNT_ID: z.string().min(1, 'R2_ACCOUNT_ID is required'),
+  R2_ACCESS_KEY_ID: z.string().min(1, 'R2_ACCESS_KEY_ID is required'),
+  R2_SECRET_ACCESS_KEY: z.string().min(1, 'R2_SECRET_ACCESS_KEY is required'),
+  R2_BUCKET: z.string().min(1, 'R2_BUCKET is required'),
+  /**
+   * Optional public CDN URL (Cloudflare custom domain bound to the bucket).
+   * NOT used for slip / ID card / meter photo — those stay private with
+   * short-TTL signed URLs per CLAUDE.md §9. Kept here for future assets
+   * like company logo that are safe to serve publicly.
+   */
+  R2_PUBLIC_URL: z.string().url().optional(),
+  /**
+   * Default signed-URL TTL in seconds. Callers may override per-request
+   * (e.g. ID card enforces ≤300s hard cap per CLAUDE.md §9). Default 300
+   * (5 min) keeps us conservative by default.
+   */
+  R2_SIGNED_URL_TTL: z.coerce.number().int().min(30).max(3600).default(300),
+
   // ---- Observability --------------------------------------------------
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });

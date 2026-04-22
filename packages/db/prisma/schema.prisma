@@ -125,6 +125,19 @@ model Company {
   slug      String        @unique @db.VarChar(32)
   name      String        @db.VarChar(128)
   status    CompanyStatus @default(active)
+  // PromptPay owner ID for issuing invoices. Accepts:
+  //   - 10-digit phone (e.g. `0812345678`),
+  //   - 13-digit national ID / tax ID,
+  //   - 15-digit e-wallet ID.
+  // Nullable so a company can be seeded before PromptPay is configured;
+  // the invoice-issue flow MUST check non-null before generating a QR.
+  // Type is inferred from digit-length at the shared/promptpay boundary
+  // — no separate `promptPayType` column needed.
+  promptPayId   String?       @map("prompt_pay_id") @db.VarChar(16)
+  // Merchant name shown in the bank app during scan (EMVCo tag 59).
+  // PromptPay spec caps at 25 ASCII chars; we keep 64 to absorb escaping
+  // headroom and truncate/sanitize at the QR-generation boundary.
+  promptPayName String?       @map("prompt_pay_name") @db.VarChar(64)
   createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 

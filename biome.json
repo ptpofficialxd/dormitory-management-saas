@@ -79,7 +79,7 @@
       }
     },
     {
-      "include": ["apps/api/vitest.config.ts", "apps/api/vitest.e2e.config.ts"],
+      "include": ["**/vitest.config.ts", "**/vitest.e2e.config.ts"],
       "linter": {
         "rules": {
           "suspicious": {
