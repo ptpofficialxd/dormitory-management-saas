@@ -1,0 +1,27 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "noEmit": true,
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "types": ["node"],
+    "paths": {
+      "@dorm/shared": ["../../packages/shared/src/index.ts"],
+      "@dorm/shared/*": ["../../packages/shared/src/*"],
+      "@/*": ["./src/*"]
+    },
+    "allowJs": true
+  },
+  "include": [
+    "next-env.d.ts",
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    ".next/types/**/*.ts",
+    "next.config.mjs",
+    "tailwind.config.ts",
+    "postcss.config.mjs"
+  ],
+  "exclude": ["node_modules", ".next", "dist"]
+}
