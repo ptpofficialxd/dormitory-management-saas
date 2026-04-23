@@ -1,6 +1,10 @@
 import {
+  type BatchGenerateInvoicesInput,
+  type BatchSkipReason,
   type CreateInvoiceInput,
   type InvoiceStatus,
+  batchGenerateInvoicesInputSchema,
+  batchGenerateInvoicesResultSchema,
   createInvoiceInputSchema,
   invoiceItemSchema,
   invoiceSchema,
@@ -40,6 +44,13 @@ export const invoicePageSchema = z.object({
 });
 export type InvoicePage = z.infer<typeof invoicePageSchema>;
 
+/**
+ * Batch generate response — no Date fields, just IDs + skip reasons,
+ * so we can re-export the shared schema as-is (no .extend() needed).
+ */
+export const batchGenerateInvoicesResultWireSchema = batchGenerateInvoicesResultSchema;
+export type BatchGenerateInvoicesResultWire = z.infer<typeof batchGenerateInvoicesResultWireSchema>;
+
 // Re-export shared input schema/type so consumers don't have to dual-import.
-export { createInvoiceInputSchema, invoiceStatusSchema };
-export type { CreateInvoiceInput, InvoiceStatus };
+export { batchGenerateInvoicesInputSchema, createInvoiceInputSchema, invoiceStatusSchema };
+export type { BatchGenerateInvoicesInput, BatchSkipReason, CreateInvoiceInput, InvoiceStatus };

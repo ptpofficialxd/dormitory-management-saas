@@ -1,8 +1,15 @@
 'use server';
 
+import { randomUUID } from 'node:crypto';
 import { ApiError, api } from '@/lib/api';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
-import { invoiceWireSchema } from '@/queries/invoices';
+import {
+  type BatchGenerateInvoicesInput,
+  type BatchGenerateInvoicesResultWire,
+  batchGenerateInvoicesInputSchema,
+  batchGenerateInvoicesResultWireSchema,
+  invoiceWireSchema,
+} from '@/queries/invoices';
 import { issueInvoiceInputSchema, voidInvoiceInputSchema } from '@dorm/shared/zod';
 import { revalidatePath } from 'next/cache';
 
@@ -97,6 +104,67 @@ export async function voidInvoiceAction(
   revalidatePath(`/c/${companySlug}/invoices/${invoiceId}`);
   revalidatePath(`/c/${companySlug}/invoices`);
   return { ok: true };
+}
+
+// =========================================================================
+// Batch generation
+// =========================================================================
+
+export type BatchGenerateResult =
+  | {
+      ok: false;
+      code: 'VALIDATION' | 'CONFLICT' | 'FORBIDDEN' | 'NETWORK' | 'UNKNOWN';
+      message: string;
+    }
+  | { ok: true; result: BatchGenerateInvoicesResultWire };
+
+/**
+ * Generate draft invoices for every active contract in a period.
+ *
+ * Idempotency: the API enforces uniqueness on (contractId, period) so a
+ * duplicate call surfaces as `duplicate_invoice` skip entries — safe to
+ * re-run. We also send an `Idempotency-Key` header per CLAUDE.md §3 #10
+ * (random UUID per request — the FRONTEND identifies "this submit" while
+ * the API's per-row uniqueness handles "this contract+period").
+ */
+export async function batchGenerateInvoicesAction(
+  companySlug: string,
+  input: BatchGenerateInvoicesInput,
+): Promise<BatchGenerateResult> {
+  const parsed = batchGenerateInvoicesInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      code: 'VALIDATION',
+      message: 'รูปแบบข้อมูลไม่ถูกต้อง — ตรวจสอบรอบบิลและวันครบกำหนด',
+    };
+  }
+
+  const token = await getAccessTokenFromCookie();
+  if (!token) {
+    return { ok: false, code: 'FORBIDDEN', message: 'กรุณาเข้าสู่ระบบใหม่' };
+  }
+
+  let result: BatchGenerateInvoicesResultWire;
+  try {
+    result = await api.post(
+      `/c/${companySlug}/invoices/batch`,
+      parsed.data,
+      batchGenerateInvoicesResultWireSchema,
+      { token, idempotencyKey: randomUUID() },
+    );
+  } catch (err) {
+    const mapped = mapApiError(err, 'สร้างใบแจ้งหนี้ไม่สำเร็จ');
+    if (mapped.ok === false && mapped.code === 'NOT_FOUND') {
+      // /batch endpoint shouldn't 404 — fall through to generic handler.
+      return { ok: false, code: 'UNKNOWN', message: mapped.message };
+    }
+    return mapped as BatchGenerateResult;
+  }
+
+  // Refresh the list so the new drafts show up when the manager navigates back.
+  revalidatePath(`/c/${companySlug}/invoices`);
+  return { ok: true, result };
 }
 
 /** Translate an ApiError into the shared discriminated-union shape. */
