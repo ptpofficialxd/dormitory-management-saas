@@ -96,7 +96,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'ใบแจ้งหนี้',
       href: `${base}/invoices`,
       icon: Receipt,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'invoice' },
     },
     {
