@@ -1,3 +1,4 @@
+import { QueryProvider } from '@/components/providers/query-provider';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
@@ -9,6 +10,12 @@ import './globals.css';
  * font here yet — `IBM Plex Sans Thai` is referenced in `tailwind.config.ts`
  * `fontFamily.sans` and falls back to the system Thai font stack until we
  * decide whether to self-host or pull from Google Fonts.
+ *
+ * `QueryProvider` wraps every route so any Client Component (login form,
+ * dashboards, future CRUD pages) can call `useQuery` / `useMutation`. See
+ * `components/providers/query-provider.tsx` for the recommended usage
+ * pattern (Server Components for initial data, Server Actions for
+ * client-side queries + mutations).
  */
 
 export const metadata: Metadata = {
@@ -29,7 +36,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="th" suppressHydrationWarning>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
-        {children}
+        <QueryProvider>{children}</QueryProvider>
       </body>
     </html>
   );
