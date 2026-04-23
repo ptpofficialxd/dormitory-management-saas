@@ -114,14 +114,16 @@ export async function getSlipViewUrlAction(
   if (!token) return { ok: false, code: 'FORBIDDEN', message: 'กรุณาเข้าสู่ระบบใหม่' };
 
   try {
-    const slip = await api.get(
-      `/c/${companySlug}/payments/${paymentId}/slip`,
-      slipWireSchema,
-      { token },
-    );
-    const view = await api.get(`/c/${companySlug}/slips/${slip.id}/view-url`, slipViewUrlWireSchema, {
+    const slip = await api.get(`/c/${companySlug}/payments/${paymentId}/slip`, slipWireSchema, {
       token,
     });
+    const view = await api.get(
+      `/c/${companySlug}/slips/${slip.id}/view-url`,
+      slipViewUrlWireSchema,
+      {
+        token,
+      },
+    );
     return { ok: true, url: view.url, expiresAt: view.expiresAt };
   } catch (err) {
     if (err instanceof ApiError) {

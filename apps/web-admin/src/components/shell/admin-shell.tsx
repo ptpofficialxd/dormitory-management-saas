@@ -103,7 +103,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'การชำระเงิน',
       href: `${base}/payments`,
       icon: Wallet,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'payment' },
     },
     {
