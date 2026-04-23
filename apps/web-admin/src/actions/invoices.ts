@@ -87,12 +87,9 @@ export async function voidInvoiceAction(
   }
 
   try {
-    await api.post(
-      `/c/${companySlug}/invoices/${invoiceId}/void`,
-      parsed.data,
-      invoiceWireSchema,
-      { token },
-    );
+    await api.post(`/c/${companySlug}/invoices/${invoiceId}/void`, parsed.data, invoiceWireSchema, {
+      token,
+    });
   } catch (err) {
     return mapApiError(err, 'ยกเลิกใบแจ้งหนี้ไม่สำเร็จ');
   }
