@@ -1,4 +1,3 @@
-import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -7,27 +6,34 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import type { Metadata } from 'next';
+import { LoginForm } from './_components/login-form';
 
 export const metadata: Metadata = {
   title: 'เข้าสู่ระบบ',
 };
 
+interface LoginPageProps {
+  searchParams: Promise<{ next?: string; slug?: string }>;
+}
+
 /**
- * Placeholder login page — UI shell only.
+ * /login — admin entry point.
  *
- * Task #58 will:
- *   - Convert this into a Client Component (or use Server Action),
- *   - Hook react-hook-form + zodResolver for client-side validation,
- *   - POST to /auth/login via the server-side `api` client,
- *   - Set the `auth_token` httpOnly cookie + redirect to /c/[slug]/dashboard.
+ * `next` (set by middleware on auth-required redirects) and `slug` (optional
+ * deep-link convenience) come in via searchParams. Both are sanitised before
+ * being passed to the client form: `next` only when it points under `/c/`,
+ * `slug` is just a string the user can change anyway.
  *
- * Keeping it server-rendered for the scaffold lets us verify Tailwind +
- * shadcn primitives compile + render without bringing in client-side JS.
+ * The actual safety check on `next` lives in `loginAction` (server-side)
+ * — we cannot rely on this server-component sanitisation alone because
+ * the client could call `loginAction(values, '<malicious>')` directly.
  */
-export default function LoginPage() {
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const sp = await searchParams;
+  const safeNext = typeof sp.next === 'string' && sp.next.startsWith('/c/') ? sp.next : undefined;
+  const slug = typeof sp.slug === 'string' ? sp.slug : undefined;
+
   return (
     <main className="flex min-h-screen items-center justify-center bg-muted/30 px-4 py-12">
       <Card className="w-full max-w-sm">
@@ -36,37 +42,10 @@ export default function LoginPage() {
           <CardDescription>สำหรับเจ้าของหอพัก ผู้จัดการ และพนักงานที่ได้รับสิทธิ์เท่านั้น</CardDescription>
         </CardHeader>
         <CardContent>
-          <form className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">อีเมล</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                placeholder="owner@example.com"
-                required
-                disabled
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">รหัสผ่าน</Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                disabled
-              />
-            </div>
-          </form>
+          <LoginForm defaultCompanySlug={slug} next={safeNext} />
         </CardContent>
-        <CardFooter className="flex flex-col gap-3">
-          <Button type="submit" className="w-full" disabled>
-            เข้าสู่ระบบ (รอ task #58)
-          </Button>
-          <p className="text-center text-xs text-muted-foreground">
+        <CardFooter>
+          <p className="w-full text-center text-xs text-muted-foreground">
             หากลืมรหัสผ่าน กรุณาติดต่อแอดมินของบริษัท
           </p>
         </CardFooter>

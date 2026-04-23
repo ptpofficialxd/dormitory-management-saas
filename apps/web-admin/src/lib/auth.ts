@@ -1,44 +1,26 @@
-import 'server-only';
+import { type AdminJwtClaims, adminJwtClaimsSchema } from '@dorm/shared/zod';
 import { jwtVerify } from 'jose';
 import { env } from './env';
 
 /**
  * JWT verification + claim extraction for the admin web.
  *
- * The token is minted by `apps/api`'s AuthService and stored as an httpOnly
- * cookie named `auth_token`. Middleware verifies on every /c/[slug]/* request;
- * Server Components read the verified claims via `getAuthClaims()`.
+ * Tokens are minted by `apps/api`'s AuthService and stored as httpOnly cookies
+ * (see `lib/cookies.ts`). Middleware verifies on every /c/[slug]/* request;
+ * Server Components / Server Actions read the verified claims via this helper.
  *
- * `jose` is used (not `jsonwebtoken`) because middleware runs on Edge by
- * default and Edge has no Node crypto — `jose` ships a Web Crypto impl.
+ * `jose` (not `jsonwebtoken`) is used because middleware runs on Edge by default
+ * and Edge has no Node `crypto`. `jose` ships a Web Crypto implementation.
+ *
+ * NOTE: this module deliberately does NOT import `'server-only'` because it is
+ * consumed by both Server Components (server runtime) and middleware (Edge
+ * runtime). Both are non-client environments, so leaking JWT_SECRET to the
+ * browser is not a concern — but bundling `server-only` into the Edge chunk
+ * has historically caused subtle errors. Keep the surface minimal.
  */
 
-/** Claims minted by apps/api/src/modules/auth/auth.service.ts. */
-export interface AdminClaims {
-  /** User id (UUID). */
-  sub: string;
-  /** User email (denormalised into the token to avoid DB hit on every request). */
-  email: string;
-  /** Display name. */
-  name: string;
-  /** RBAC role — one of the 5 fixed roles per CLAUDE.md §3 #13. */
-  role: 'company_owner' | 'property_manager' | 'staff' | 'tenant' | 'guardian';
-  /** Company id (UUID) the user belongs to. */
-  companyId: string;
-  /** Slug for path-based routing — denormalised for nav links. */
-  companySlug: string;
-  /** JWT id (nonce — for revocation lookup). */
-  jti: string;
-  /** Issued-at, in seconds since epoch. */
-  iat: number;
-  /** Expires-at, in seconds since epoch. */
-  exp: number;
-}
+export type { AdminJwtClaims };
 
-/** Cookie name — keep consistent across middleware, login action, and logout. */
-export const AUTH_COOKIE_NAME = 'auth_token';
-
-/** Lazily-encoded secret — `jose` wants Uint8Array, not string. */
 let secretBytes: Uint8Array | null = null;
 function getSecretBytes(): Uint8Array {
   if (!secretBytes) secretBytes = new TextEncoder().encode(env.JWT_SECRET);
@@ -46,43 +28,32 @@ function getSecretBytes(): Uint8Array {
 }
 
 /**
- * Verify a JWT and return its admin claims. Returns `null` (NOT throws) on
- * any verification failure — middleware and route guards branch on the null
- * to redirect → /login without leaking error details to the browser.
+ * Verify an admin **access** token and return its claims, or `null` on any
+ * verification failure (bad signature / expired / wrong typ / shape mismatch).
+ *
+ * Returns null instead of throwing so middleware and route guards can
+ * branch with `if (!claims) redirect('/login')` cleanly without try/catch.
  */
-export async function verifyAdminToken(token: string): Promise<AdminClaims | null> {
+export async function verifyAdminAccessToken(token: string): Promise<AdminJwtClaims | null> {
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, getSecretBytes(), {
       algorithms: ['HS256'],
     });
-    // Narrow to AdminClaims — defensive checks since payload is `JWTPayload`.
-    if (
-      typeof payload.sub === 'string' &&
-      typeof payload.email === 'string' &&
-      typeof payload.name === 'string' &&
-      typeof payload.role === 'string' &&
-      typeof payload.companyId === 'string' &&
-      typeof payload.companySlug === 'string' &&
-      typeof payload.jti === 'string' &&
-      typeof payload.iat === 'number' &&
-      typeof payload.exp === 'number' &&
-      isAdminRole(payload.role)
-    ) {
-      return {
-        sub: payload.sub,
-        email: payload.email,
-        name: payload.name,
-        role: payload.role,
-        companyId: payload.companyId,
-        companySlug: payload.companySlug,
-        jti: payload.jti,
-        iat: payload.iat,
-        exp: payload.exp,
-      };
+    const result = adminJwtClaimsSchema.safeParse(payload);
+    if (!result.success) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[auth] JWT claim shape mismatch:', result.error.flatten());
+      }
+      return null;
     }
-    console.warn('[auth] JWT payload shape mismatch:', payload);
-    return null;
+    // Refuse refresh-tokens replayed as access — apps/api enforces this on
+    // the server too, but defence-in-depth on the client is cheap.
+    if (result.data.typ !== 'access') {
+      console.warn('[auth] JWT typ mismatch — refused token of type:', result.data.typ);
+      return null;
+    }
+    return result.data;
   } catch (err) {
     // Expired / bad signature / malformed — all collapse to "not logged in".
     if (process.env.NODE_ENV !== 'production') {
@@ -90,14 +61,4 @@ export async function verifyAdminToken(token: string): Promise<AdminClaims | nul
     }
     return null;
   }
-}
-
-function isAdminRole(role: string): role is AdminClaims['role'] {
-  return (
-    role === 'company_owner' ||
-    role === 'property_manager' ||
-    role === 'staff' ||
-    role === 'tenant' ||
-    role === 'guardian'
-  );
 }

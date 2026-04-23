@@ -1,30 +1,62 @@
-import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { verifyAdminAccessToken } from '@/lib/auth';
+import { ACCESS_COOKIE_NAME } from '@/lib/auth-constants';
+import { type NextRequest, NextResponse } from 'next/server';
 
 /**
- * Middleware — auth gate for `/c/[companySlug]/*`.
+ * Auth gate for `/c/[companySlug]/*`.
  *
- * SCAFFOLD STAGE: pass-through. Task #58 will replace the body with:
- *   1. Skip /_next, /api, static assets,
- *   2. Read `auth_token` cookie,
- *   3. `verifyAdminToken` (jose works on Edge),
- *   4. On null → 302 to /login?next=<original>,
- *   5. On valid claims → assert `params.companySlug` matches `claim.companySlug`,
- *      otherwise 403 (cross-company nav attempt).
+ * Runs on every matching request (matcher excludes static assets, /login,
+ * and /api/health). Two responsibilities:
  *
- * Kept as a no-op now so:
- *   - The route works in dev without env vars set,
- *   - We exercise Next's middleware compile path during `next build` early,
- *   - The matcher is fixed in one place once auth lands.
+ *   1. **Authentication** — verify the access token cookie (JWT, HS256).
+ *      Missing/invalid → 302 to /login?next=<original path>.
+ *
+ *   2. **Tenant isolation** — claims.companySlug MUST match the path's
+ *      [companySlug] param. A mismatch is treated as a stale bookmark
+ *      (e.g. user changed company) and is silently rewritten to the
+ *      user's own company dashboard. We do NOT 403 here — that would
+ *      surface as a confusing error page; the layout already calls
+ *      verifyAdminAccessToken again as defence in depth.
+ *
+ * Refresh-token rotation is intentionally NOT done here — it would require
+ * a synchronous fetch from the Edge runtime to /auth/refresh on every page
+ * load. Instead, the access token expires from its own cookie `expires` and
+ * the user re-logs in. Refresh rotation will land in a follow-up once we
+ * have a server-side helper that can mint+set inside a Route Handler.
  */
-export function middleware(_req: NextRequest) {
+export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl;
+
+  // Only gate /c/[slug]/* — matcher already excludes /login + Next internals.
+  const slugMatch = pathname.match(/^\/c\/([^/]+)/);
+  if (!slugMatch) return NextResponse.next();
+  const requestedSlug = slugMatch[1];
+
+  const accessToken = req.cookies.get(ACCESS_COOKIE_NAME)?.value;
+  const claims = accessToken ? await verifyAdminAccessToken(accessToken) : null;
+
+  if (!claims) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/login';
+    url.search = '';
+    url.searchParams.set('next', pathname);
+    return NextResponse.redirect(url);
+  }
+
+  if (claims.companySlug !== requestedSlug) {
+    const url = req.nextUrl.clone();
+    url.pathname = `/c/${claims.companySlug}/dashboard`;
+    url.search = '';
+    return NextResponse.redirect(url);
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
   /**
-   * Run on every page that needs auth. /login and Next internals are excluded
-   * via the negative-lookahead pattern — this is the recommended Next 15 form.
+   * Run on every page that needs auth. /login + Next internals are excluded
+   * via the negative-lookahead pattern — recommended Next 15 form.
    */
   matcher: ['/((?!_next/static|_next/image|favicon.ico|login|api/health).*)'],
 };
