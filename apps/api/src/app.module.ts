@@ -7,6 +7,7 @@ import { PathCompanyGuard } from './common/guards/path-company.guard.js';
 import { RbacGuard } from './common/guards/rbac.guard.js';
 import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor.js';
 import { TenantContextInterceptor } from './common/middleware/tenant-context.interceptor.js';
+import { QueueModule } from './common/queue/queue.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
@@ -46,6 +47,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
 @Module({
   imports: [
     CryptoModule,
+    QueueModule,
     StorageModule,
     HealthModule,
     AuthModule,

@@ -116,14 +116,47 @@ Use these exact terms in code (camelCase for TS, snake_case in DB).
 
 ## 6. Definition of Done (apply to every PR)
 
-- [ ] `pnpm typecheck` clean
-- [ ] `pnpm lint` clean
+- [ ] `bun run verify` clean (lint + bun-api-guard + typecheck + shared test + api test + build)
 - [ ] Unit tests added for new domain logic (≥70% on billing/auth/audit)
 - [ ] **Isolation test**: RLS verified with 2 companies on any new tenant-owned table
 - [ ] Audit log emitted for any mutation on PII/money
 - [ ] All strings via i18n key (th-TH default); no hard-coded Thai in components
 - [ ] Mobile-responsive ≥ 375px (if UI)
 - [ ] PR description answers: **RLS impact? Audit log? Idempotent?**
+- [ ] Commit message follows §6b template
+
+### 6b. Commit Message Template (Conventional Commits — required)
+
+Every commit MUST use this structure:
+
+```
+<type>(<scope>): <imperative short summary> (Task #N)
+
+<short paragraph อธิบายว่าทำอะไร / ทำไม>
+
+Changes:
+- <bullet ของไฟล์/feature ที่แก้>
+- <bullet ที่ 2>
+
+PR Checks:
+- RLS impact: <yes — policy added on table X / no — admin-only / N/A>
+- Audit log: <yes — emitted on mutations of X / no — read-only>
+- Idempotent: <yes — key: X / no — N/A>
+- Node-compatible: <yes — no Bun.* / N/A>
+
+Refs: ADR-XXXX, Task #N
+```
+
+**Rules:**
+
+| Field | Rule |
+| --- | --- |
+| `<type>` | `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, `build`, `ci`, `style` |
+| `<scope>` | Package/module (e.g. `api`, `db`, `shared`, `billing`, `line`, `build`). Multiple OK: `fix(lint,typecheck): ...` |
+| Subject | Imperative mood, lowercase, ≤72 chars, no period |
+| Body | Wrap ~72 chars, use bullets |
+| `BREAKING CHANGE:` footer | Required for DB migration that isn't backward-compatible |
+| `Refs` footer | Link to ADR (if applicable) + Task # — always |
 
 ---
 

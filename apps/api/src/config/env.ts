@@ -19,8 +19,16 @@ const envSchema = z.object({
   /** Admin role URL — only migrations / apply-rls. NEVER used at runtime. */
   DATABASE_URL: z.string().url().optional(),
 
-  // ---- Redis (for future BullMQ / sessions) ---------------------------
-  REDIS_URL: z.string().url().optional(),
+  // ---- Redis (BullMQ + cache) -----------------------------------------
+  /**
+   * Redis connection URL (`redis://[:password@]host:port[/db]`).
+   *
+   * Required from Task #38 onwards — BullMQ queues + worker share this
+   * connection. Dev infra (`bun run infra:start`) provides one at
+   * `redis://localhost:6379`. Tests in `.env.test` get their own DB index
+   * to avoid colliding with dev queues.
+   */
+  REDIS_URL: z.string().url(),
 
   // ---- Auth -----------------------------------------------------------
   /** HS256 signing key. ≥32 chars per CLAUDE.md §7. */
