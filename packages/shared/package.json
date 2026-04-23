@@ -4,44 +4,54 @@
   "private": true,
   "type": "module",
   "description": "Shared primitives: Zod schemas, RBAC, money (Decimal), date, PromptPay — used by api/web/liff",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./constants": {
-      "types": "./src/constants.ts",
-      "default": "./src/constants.ts"
+      "types": "./dist/constants.d.ts",
+      "import": "./dist/constants.js",
+      "default": "./dist/constants.js"
     },
     "./money": {
-      "types": "./src/money.ts",
-      "default": "./src/money.ts"
+      "types": "./dist/money.d.ts",
+      "import": "./dist/money.js",
+      "default": "./dist/money.js"
     },
     "./date": {
-      "types": "./src/date.ts",
-      "default": "./src/date.ts"
+      "types": "./dist/date.d.ts",
+      "import": "./dist/date.js",
+      "default": "./dist/date.js"
     },
     "./rbac": {
-      "types": "./src/rbac/index.ts",
-      "default": "./src/rbac/index.ts"
+      "types": "./dist/rbac/index.d.ts",
+      "import": "./dist/rbac/index.js",
+      "default": "./dist/rbac/index.js"
     },
     "./promptpay": {
-      "types": "./src/promptpay.ts",
-      "default": "./src/promptpay.ts"
+      "types": "./dist/promptpay.d.ts",
+      "import": "./dist/promptpay.js",
+      "default": "./dist/promptpay.js"
     },
     "./slug": {
-      "types": "./src/slug.ts",
-      "default": "./src/slug.ts"
+      "types": "./dist/slug.d.ts",
+      "import": "./dist/slug.js",
+      "default": "./dist/slug.js"
     },
     "./errors": {
-      "types": "./src/errors.ts",
-      "default": "./src/errors.ts"
+      "types": "./dist/errors.d.ts",
+      "import": "./dist/errors.js",
+      "default": "./dist/errors.js"
     },
     "./zod": {
-      "types": "./src/zod/index.ts",
-      "default": "./src/zod/index.ts"
+      "types": "./dist/zod/index.d.ts",
+      "import": "./dist/zod/index.js",
+      "default": "./dist/zod/index.js"
     }
   },
   "scripts": {
