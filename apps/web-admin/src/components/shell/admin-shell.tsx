@@ -37,9 +37,15 @@ import { type ComponentType, type ReactNode, useState } from 'react';
  * - The Server `layout.tsx` wraps this component, runs the auth claims
  *   check, hands `<RbacProvider>` to feed the role context, and passes
  *   `<LogoutButton />` (Server Component) as the `logoutSlot` prop.
+ *
+ * Nav structure: items can be leaves (single link) OR groups (header +
+ * indented children). The discriminated union keeps the render logic
+ * exhaustive — TS narrows on `kind`. Groups whose children all fail the
+ * RBAC filter are dropped entirely (no orphan headers).
  */
 
-interface NavItem {
+interface NavLeaf {
+  kind: 'leaf';
   label: string;
   href: string;
   icon: ComponentType<{ className?: string }>;
@@ -54,10 +60,20 @@ interface NavItem {
   requires?: { action: Action; resource: Resource };
 }
 
+interface NavGroup {
+  kind: 'group';
+  label: string;
+  /** Children are filtered individually; the group is dropped if all hide. */
+  items: NavLeaf[];
+}
+
+type NavItem = NavLeaf | NavGroup;
+
 function buildNavItems(slug: string): NavItem[] {
   const base = `/c/${slug}`;
   return [
     {
+      kind: 'leaf',
       label: 'แดชบอร์ด',
       href: `${base}/dashboard`,
       icon: LayoutDashboard,
@@ -65,6 +81,7 @@ function buildNavItems(slug: string): NavItem[] {
       // No requires — every authenticated admin role lands here.
     },
     {
+      kind: 'leaf',
       label: 'อาคาร',
       href: `${base}/properties`,
       icon: Building2,
@@ -72,6 +89,7 @@ function buildNavItems(slug: string): NavItem[] {
       requires: { action: 'read', resource: 'property' },
     },
     {
+      kind: 'leaf',
       label: 'ห้อง',
       href: `${base}/units`,
       icon: DoorOpen,
@@ -79,6 +97,7 @@ function buildNavItems(slug: string): NavItem[] {
       requires: { action: 'read', resource: 'unit' },
     },
     {
+      kind: 'leaf',
       label: 'ผู้เช่า',
       href: `${base}/tenants`,
       icon: Users,
@@ -86,6 +105,7 @@ function buildNavItems(slug: string): NavItem[] {
       requires: { action: 'read', resource: 'tenant_user' },
     },
     {
+      kind: 'leaf',
       label: 'สัญญา',
       href: `${base}/contracts`,
       icon: FileText,
@@ -93,20 +113,33 @@ function buildNavItems(slug: string): NavItem[] {
       requires: { action: 'read', resource: 'contract' },
     },
     {
-      label: 'ใบแจ้งหนี้',
-      href: `${base}/invoices`,
-      icon: Receipt,
-      ready: true,
-      requires: { action: 'read', resource: 'invoice' },
+      // Billing group — invoices + payments live together because the
+      // operator's daily flow goes invoice -> slip -> payment confirm.
+      // Settings page (#XX) may also slot here once company billing
+      // config (PromptPay ID, late-fee policy) lands.
+      kind: 'group',
+      label: 'การเงิน',
+      items: [
+        {
+          kind: 'leaf',
+          label: 'ใบแจ้งหนี้',
+          href: `${base}/invoices`,
+          icon: Receipt,
+          ready: true,
+          requires: { action: 'read', resource: 'invoice' },
+        },
+        {
+          kind: 'leaf',
+          label: 'การชำระเงิน',
+          href: `${base}/payments`,
+          icon: Wallet,
+          ready: true,
+          requires: { action: 'read', resource: 'payment' },
+        },
+      ],
     },
     {
-      label: 'การชำระเงิน',
-      href: `${base}/payments`,
-      icon: Wallet,
-      ready: true,
-      requires: { action: 'read', resource: 'payment' },
-    },
-    {
+      kind: 'leaf',
       label: 'แจ้งซ่อม',
       href: `${base}/maintenance`,
       icon: Wrench,
@@ -114,6 +147,7 @@ function buildNavItems(slug: string): NavItem[] {
       requires: { action: 'read', resource: 'maintenance_ticket' },
     },
     {
+      kind: 'leaf',
       label: 'ประกาศ',
       href: `${base}/announcements`,
       icon: Megaphone,
@@ -121,6 +155,7 @@ function buildNavItems(slug: string): NavItem[] {
       requires: { action: 'read', resource: 'announcement' },
     },
     {
+      kind: 'leaf',
       label: 'ตั้งค่า',
       href: `${base}/settings`,
       icon: Settings,
@@ -140,6 +175,7 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   tenants: 'ผู้เช่า',
   contracts: 'สัญญา',
   invoices: 'ใบแจ้งหนี้',
+  generate: 'สร้างรอบบิล',
   payments: 'การชำระเงิน',
   maintenance: 'แจ้งซ่อม',
   announcements: 'ประกาศ',
@@ -163,11 +199,9 @@ export function AdminShell({ companySlug, email, logoutSlot, children }: AdminSh
   const [mobileOpen, setMobileOpen] = useState(false);
   const { can } = useRole();
 
-  // Filter nav by permission — the matrix is the single source of truth.
-  // Items without `requires` are always shown (e.g. Dashboard).
-  const navItems = buildNavItems(companySlug).filter(
-    (item) => !item.requires || can(item.requires.action, item.requires.resource),
-  );
+  // Filter the nav tree by permission. Groups whose children all hide are
+  // dropped entirely — no orphan section headers.
+  const navItems = filterByPermissions(buildNavItems(companySlug), can);
 
   // Derive breadcrumb segments from the path after /c/[slug]/.
   const slugPrefix = `/c/${companySlug}`;
@@ -213,15 +247,24 @@ export function AdminShell({ companySlug, email, logoutSlot, children }: AdminSh
 
         <nav className="flex-1 overflow-y-auto p-2" aria-label="หลัก">
           <ul className="space-y-0.5">
-            {navItems.map((item) => (
-              <li key={item.href}>
-                <NavRow
-                  item={item}
-                  active={pathname === item.href}
+            {navItems.map((item, idx) =>
+              item.kind === 'group' ? (
+                <NavGroupBlock
+                  key={`group-${item.label}-${idx}`}
+                  group={item}
+                  pathname={pathname ?? ''}
                   onNavigate={() => setMobileOpen(false)}
                 />
-              </li>
-            ))}
+              ) : (
+                <li key={item.href}>
+                  <NavRow
+                    item={item}
+                    active={pathname === item.href}
+                    onNavigate={() => setMobileOpen(false)}
+                  />
+                </li>
+              ),
+            )}
           </ul>
         </nav>
 
@@ -263,20 +306,91 @@ export function AdminShell({ companySlug, email, logoutSlot, children }: AdminSh
 }
 
 // -------------------------------------------------------------------------
+// Filtering
+// -------------------------------------------------------------------------
+
+/**
+ * Recursively filter the nav tree by RBAC. A leaf without `requires`
+ * always passes; a leaf with `requires` passes when `can()` returns true.
+ * A group is kept only when ≥1 child survives (no orphan headers).
+ */
+function filterByPermissions(
+  items: NavItem[],
+  can: (action: Action, resource: Resource) => boolean,
+): NavItem[] {
+  const out: NavItem[] = [];
+  for (const item of items) {
+    if (item.kind === 'leaf') {
+      if (!item.requires || can(item.requires.action, item.requires.resource)) {
+        out.push(item);
+      }
+    } else {
+      const survivors = item.items.filter(
+        (child) => !child.requires || can(child.requires.action, child.requires.resource),
+      );
+      if (survivors.length > 0) {
+        out.push({ ...item, items: survivors });
+      }
+    }
+  }
+  return out;
+}
+
+// -------------------------------------------------------------------------
 // Subcomponents
 // -------------------------------------------------------------------------
+
+function NavGroupBlock({
+  group,
+  pathname,
+  onNavigate,
+}: {
+  group: NavGroup;
+  pathname: string;
+  onNavigate: () => void;
+}) {
+  return (
+    <li className="pt-3 first:pt-0">
+      <div
+        className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70"
+        // Treat the header as a non-interactive label (sub-items still focusable).
+        aria-hidden="true"
+      >
+        {group.label}
+      </div>
+      <ul className="space-y-0.5">
+        {group.items.map((child) => (
+          <li key={child.href}>
+            <NavRow
+              item={child}
+              active={pathname === child.href}
+              onNavigate={onNavigate}
+              indented
+            />
+          </li>
+        ))}
+      </ul>
+    </li>
+  );
+}
 
 function NavRow({
   item,
   active,
   onNavigate,
+  indented = false,
 }: {
-  item: NavItem;
+  item: NavLeaf;
   active: boolean;
   onNavigate: () => void;
+  /** When true, render with extra left-padding so children of a NavGroup nest visually. */
+  indented?: boolean;
 }) {
   const Icon = item.icon;
-  const baseClass = 'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors';
+  const baseClass = cn(
+    'flex items-center gap-3 rounded-md py-2 text-sm transition-colors',
+    indented ? 'pl-6 pr-3' : 'px-3',
+  );
 
   // Disabled / "Soon" — render a span (not a Link) so it's not navigable.
   if (!item.ready) {
