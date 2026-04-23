@@ -51,13 +51,13 @@ interface ApiOptions {
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 
-async function request<T>(
+async function request<S extends z.ZodTypeAny>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   body: unknown,
-  schema: z.ZodType<T>,
+  schema: S,
   opts: ApiOptions = {},
-): Promise<T> {
+): Promise<z.infer<S>> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
@@ -140,12 +140,21 @@ async function request<T>(
 }
 
 export const api = {
-  get: <T>(path: string, schema: z.ZodType<T>, opts?: ApiOptions) =>
+  /**
+   * Generic uses `S extends z.ZodTypeAny` (not `z.ZodType<T>`) so the return
+   * type is `z.infer<S>` — i.e. the schema's OUTPUT after `.default()` /
+   * `.transform()` apply. The narrower `z.ZodType<T>` constraint forces TS
+   * to settle T on the schema's INPUT shape, which would mark default-
+   * carrying fields as `optional/undefined` in the response (e.g.
+   * `unitSchema.status.default('vacant')` would be typed as `status?` even
+   * though the parse always fills it).
+   */
+  get: <S extends z.ZodTypeAny>(path: string, schema: S, opts?: ApiOptions) =>
     request('GET', path, undefined, schema, opts),
-  post: <T>(path: string, body: unknown, schema: z.ZodType<T>, opts?: ApiOptions) =>
+  post: <S extends z.ZodTypeAny>(path: string, body: unknown, schema: S, opts?: ApiOptions) =>
     request('POST', path, body, schema, opts),
-  patch: <T>(path: string, body: unknown, schema: z.ZodType<T>, opts?: ApiOptions) =>
+  patch: <S extends z.ZodTypeAny>(path: string, body: unknown, schema: S, opts?: ApiOptions) =>
     request('PATCH', path, body, schema, opts),
-  delete: <T>(path: string, schema: z.ZodType<T>, opts?: ApiOptions) =>
+  delete: <S extends z.ZodTypeAny>(path: string, schema: S, opts?: ApiOptions) =>
     request('DELETE', path, undefined, schema, opts),
 };

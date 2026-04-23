@@ -4,7 +4,7 @@ import {
   upsertCompanyLineChannelInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, Put } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody } from '../../common/decorators/zod-body.decorator.js';
 import { CompanyLineChannelService } from './company-line-channel.service.js';
 
@@ -32,13 +32,13 @@ export class CompanyLineChannelController {
   constructor(private readonly service: CompanyLineChannelService) {}
 
   @Get()
-  @Roles('company_owner', 'property_manager')
+  @Perm('read', 'company')
   get(): Promise<CompanyLineChannelPublic> {
     return this.service.getForCurrentCompany();
   }
 
   @Put()
-  @Roles('company_owner', 'property_manager')
+  @Perm('update', 'company')
   upsert(
     @ZodBody(upsertCompanyLineChannelInputSchema) body: UpsertCompanyLineChannelInput,
   ): Promise<CompanyLineChannelPublic> {

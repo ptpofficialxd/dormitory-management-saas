@@ -17,8 +17,8 @@ import {
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { Public } from '../../common/decorators/public.decorator.js';
-import { Roles } from '../../common/decorators/roles.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { LineIdTokenVerifier } from './line-id-token.verifier.js';
@@ -54,7 +54,7 @@ export class AdminTenantInviteController {
    */
   @Post('tenants/:tenantId/invites')
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('create', 'tenant_user')
   generate(
     @Param('tenantId', new ParseUUIDPipe()) tenantId: string,
     @ZodBody(generateTenantInviteInputSchema) _body: GenerateTenantInviteInput,
@@ -68,7 +68,7 @@ export class AdminTenantInviteController {
    * tenant. Cursor-paginated, optional status filter.
    */
   @Get('tenants/:tenantId/invites')
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('read', 'tenant_user')
   list(
     @Param('tenantId', new ParseUUIDPipe()) tenantId: string,
     @ZodQuery(listTenantInvitesQuerySchema) query: ListTenantInvitesQuery,
@@ -82,7 +82,7 @@ export class AdminTenantInviteController {
    */
   @Post('tenant-invites/:id/revoke')
   @HttpCode(200)
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('delete', 'tenant_user')
   revoke(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(revokeTenantInviteInputSchema) body: RevokeTenantInviteInput,

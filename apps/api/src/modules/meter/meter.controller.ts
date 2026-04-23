@@ -8,7 +8,7 @@ import {
   updateMeterInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { MeterService } from './meter.service.js';
@@ -40,13 +40,13 @@ export class MeterController {
 
   @Post()
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('create', 'meter')
   create(@ZodBody(createMeterInputSchema) body: CreateMeterInput): Promise<Meter> {
     return this.meterService.create(body);
   }
 
   @Patch(':id')
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('update', 'meter')
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(updateMeterInputSchema) body: UpdateMeterInput,

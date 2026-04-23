@@ -15,7 +15,7 @@ import {
   voidInvoiceInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { InvoiceService } from './invoice.service.js';
@@ -57,7 +57,7 @@ export class InvoiceController {
 
   @Post()
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager')
+  @Perm('create', 'invoice')
   create(@ZodBody(createInvoiceInputSchema) body: CreateInvoiceInput): Promise<Invoice> {
     return this.invoiceService.create(body);
   }
@@ -73,7 +73,7 @@ export class InvoiceController {
    */
   @Post('batch')
   @HttpCode(200)
-  @Roles('company_owner', 'property_manager')
+  @Perm('create', 'invoice')
   createBatch(
     @ZodBody(batchGenerateInvoicesInputSchema) body: BatchGenerateInvoicesInput,
   ): Promise<BatchGenerateInvoicesResult> {
@@ -81,7 +81,7 @@ export class InvoiceController {
   }
 
   @Patch(':id')
-  @Roles('company_owner', 'property_manager')
+  @Perm('update', 'invoice')
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(updateInvoiceInputSchema) body: UpdateInvoiceInput,
@@ -96,7 +96,7 @@ export class InvoiceController {
    */
   @Post(':id/issue')
   @HttpCode(200)
-  @Roles('company_owner', 'property_manager')
+  @Perm('approve', 'invoice')
   issue(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(issueInvoiceInputSchema) _body: IssueInvoiceInput,
@@ -110,7 +110,7 @@ export class InvoiceController {
    */
   @Post(':id/void')
   @HttpCode(200)
-  @Roles('company_owner', 'property_manager')
+  @Perm('update', 'invoice')
   void(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(voidInvoiceInputSchema) body: VoidInvoiceInput,

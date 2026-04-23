@@ -8,7 +8,7 @@ import {
   updateContractInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { ContractService } from './contract.service.js';
@@ -43,13 +43,13 @@ export class ContractController {
 
   @Post()
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager')
+  @Perm('create', 'contract')
   create(@ZodBody(createContractInputSchema) body: CreateContractInput): Promise<Contract> {
     return this.contractService.create(body);
   }
 
   @Patch(':id')
-  @Roles('company_owner', 'property_manager')
+  @Perm('update', 'contract')
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(updateContractInputSchema) body: UpdateContractInput,

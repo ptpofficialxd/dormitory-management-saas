@@ -20,7 +20,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { PaymentService } from './payment.service.js';
@@ -69,7 +69,7 @@ export class PaymentController {
    */
   @Post()
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('create', 'payment')
   create(
     @ZodBody(createPaymentInputSchema) body: CreatePaymentInput,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
@@ -91,7 +91,7 @@ export class PaymentController {
    */
   @Post(':id/confirm')
   @HttpCode(200)
-  @Roles('company_owner', 'property_manager')
+  @Perm('approve', 'payment')
   confirm(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(confirmPaymentInputSchema) body: ConfirmPaymentInput,
@@ -107,7 +107,7 @@ export class PaymentController {
    */
   @Post(':id/reject')
   @HttpCode(200)
-  @Roles('company_owner', 'property_manager')
+  @Perm('approve', 'payment')
   reject(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(rejectPaymentInputSchema) body: RejectPaymentInput,

@@ -8,7 +8,7 @@ import {
   uploadSlipInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody } from '../../common/decorators/zod-body.decorator.js';
 import { SlipService } from './slip.service.js';
 
@@ -55,7 +55,7 @@ export class SlipController {
    */
   @Post('payments/:paymentId/slip/upload-url')
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff', 'tenant')
+  @Perm('create', 'slip')
   createUploadUrl(
     @Param('paymentId', new ParseUUIDPipe()) paymentId: string,
     @ZodBody(slipUploadUrlInputSchema) body: SlipUploadUrlInput,
@@ -70,7 +70,7 @@ export class SlipController {
    */
   @Post('payments/:paymentId/slip')
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff', 'tenant')
+  @Perm('create', 'slip')
   register(
     @Param('paymentId', new ParseUUIDPipe()) paymentId: string,
     @ZodBody(uploadSlipInputSchema) body: UploadSlipInput,
@@ -80,7 +80,7 @@ export class SlipController {
 
   /** Fetch slip metadata for a payment (admin / tenant own-view). */
   @Get('payments/:paymentId/slip')
-  @Roles('company_owner', 'property_manager', 'staff', 'tenant')
+  @Perm('read', 'slip')
   getByPaymentId(@Param('paymentId', new ParseUUIDPipe()) paymentId: string): Promise<Slip> {
     return this.slipService.getByPaymentId(paymentId);
   }
@@ -91,14 +91,14 @@ export class SlipController {
    * `R2_SIGNED_URL_TTL` (5 min default) per CLAUDE.md §3.9.
    */
   @Get('slips/:id/view-url')
-  @Roles('company_owner', 'property_manager', 'staff', 'tenant')
+  @Perm('read', 'slip')
   getViewUrl(@Param('id', new ParseUUIDPipe()) id: string): Promise<SlipViewUrlResponse> {
     return this.slipService.getViewUrl(id);
   }
 
   /** Slip detail by id — admin path. */
   @Get('slips/:id')
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('read', 'slip')
   getById(@Param('id', new ParseUUIDPipe()) id: string): Promise<Slip> {
     return this.slipService.getById(id);
   }

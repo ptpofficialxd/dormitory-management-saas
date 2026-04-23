@@ -8,7 +8,7 @@ import {
   updateTenantInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { TenantService } from './tenant.service.js';
@@ -40,13 +40,13 @@ export class TenantController {
 
   @Post()
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('create', 'tenant_user')
   create(@ZodBody(createTenantInputSchema) body: CreateTenantInput): Promise<Tenant> {
     return this.tenantService.create(body);
   }
 
   @Patch(':id')
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('update', 'tenant_user')
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(updateTenantInputSchema) body: UpdateTenantInput,

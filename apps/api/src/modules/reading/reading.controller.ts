@@ -8,7 +8,7 @@ import {
   updateReadingInputSchema,
 } from '@dorm/shared/zod';
 import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
-import { Roles } from '../../common/decorators/roles.decorator.js';
+import { Perm } from '../../common/decorators/perm.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
 import { ReadingService } from './reading.service.js';
@@ -45,13 +45,13 @@ export class ReadingController {
 
   @Post()
   @HttpCode(201)
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('create', 'meter_reading')
   create(@ZodBody(createReadingInputSchema) body: CreateReadingInput): Promise<Reading> {
     return this.readingService.create(body);
   }
 
   @Patch(':id')
-  @Roles('company_owner', 'property_manager', 'staff')
+  @Perm('update', 'meter_reading')
   update(
     @Param('id', new ParseUUIDPipe()) id: string,
     @ZodBody(updateReadingInputSchema) body: UpdateReadingInput,

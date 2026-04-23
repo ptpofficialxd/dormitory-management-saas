@@ -75,7 +75,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'ห้อง',
       href: `${base}/units`,
       icon: DoorOpen,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'unit' },
     },
     {

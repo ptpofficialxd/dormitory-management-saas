@@ -2,7 +2,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiError, api } from '@/lib/api';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
-import { propertyPageSchema } from '@/queries/properties';
+import { type PropertyPage, propertyPageSchema } from '@/queries/properties';
 import { Plus } from 'lucide-react';
 import type { Metadata } from 'next';
 import Link from 'next/link';
@@ -41,7 +41,9 @@ export default async function PropertiesPage({ params, searchParams }: Propertie
 
   const queryString = sp.cursor ? `?cursor=${encodeURIComponent(sp.cursor)}` : '';
 
-  let page: Awaited<ReturnType<typeof api.get<typeof propertyPageSchema._type>>>;
+  // Use the exported wire type directly — aligns with the `S extends
+  // z.ZodTypeAny` generic on `api.get` (see lib/api.ts rationale).
+  let page: PropertyPage;
   try {
     page = await api.get(`/c/${companySlug}/properties${queryString}`, propertyPageSchema, {
       token,
