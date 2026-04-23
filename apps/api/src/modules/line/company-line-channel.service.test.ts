@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockUpsert = vi.fn();
 const mockFindUnique = vi.fn();
+const mockCompanyFindUnique = vi.fn();
 const mockGetTenantContext = vi.fn();
 const mockWithTenant = vi.fn();
 
@@ -25,6 +26,9 @@ vi.mock('@dorm/db', () => ({
     companyLineChannel: {
       findUnique: mockFindUnique,
       upsert: mockUpsert,
+    },
+    company: {
+      findUnique: mockCompanyFindUnique,
     },
   },
   getTenantContext: mockGetTenantContext,
@@ -64,6 +68,7 @@ describe('CompanyLineChannelService', () => {
   beforeEach(() => {
     mockUpsert.mockReset();
     mockFindUnique.mockReset();
+    mockCompanyFindUnique.mockReset();
     mockGetTenantContext.mockReset();
     mockWithTenant.mockReset();
     mockGetTenantContext.mockReturnValue({ companyId: COMPANY_ID });
@@ -258,6 +263,104 @@ describe('CompanyLineChannelService', () => {
       crypto.decrypt.mockResolvedValue(null);
 
       await expect(service.findByChannelIdUnscoped(CHANNEL_ID)).rejects.toThrow(
+        InternalServerErrorException,
+      );
+    });
+  });
+
+  describe('findByCompanySlugUnscoped', () => {
+    const SLUG = 'dorm-hq';
+
+    it('opens a bypass-RLS boundary, resolves slug→companyId, then loads channel', async () => {
+      mockCompanyFindUnique.mockResolvedValueOnce({ id: COMPANY_ID, status: 'active' });
+      mockFindUnique.mockResolvedValueOnce({
+        id: CHANNEL_ROW_ID,
+        companyId: COMPANY_ID,
+        channelId: CHANNEL_ID,
+        channelSecret: `ENC(${CHANNEL_SECRET})`,
+        channelAccessToken: `ENC(${ACCESS_TOKEN})`,
+        basicId: null,
+        displayName: null,
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+        updatedAt: new Date('2026-04-22T00:00:00Z'),
+      });
+
+      await service.findByCompanySlugUnscoped(SLUG);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
+      const ctx = mockWithTenant.mock.calls[0]![0];
+      expect(ctx).toEqual({ companyId: '', bypassRls: true });
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
+      const companyArgs = mockCompanyFindUnique.mock.calls[0]![0];
+      expect(companyArgs.where).toEqual({ slug: SLUG });
+      expect(companyArgs.select).toEqual({ id: true, status: true });
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
+      const channelArgs = mockFindUnique.mock.calls[0]![0];
+      expect(channelArgs.where).toEqual({ companyId: COMPANY_ID });
+    });
+
+    it('returns the row with credentials DECRYPTED for the internal caller', async () => {
+      mockCompanyFindUnique.mockResolvedValueOnce({ id: COMPANY_ID, status: 'active' });
+      mockFindUnique.mockResolvedValueOnce({
+        id: CHANNEL_ROW_ID,
+        companyId: COMPANY_ID,
+        channelId: CHANNEL_ID,
+        channelSecret: `ENC(${CHANNEL_SECRET})`,
+        channelAccessToken: `ENC(${ACCESS_TOKEN})`,
+        basicId: '@dormhq',
+        displayName: 'Dorm HQ',
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+        updatedAt: new Date('2026-04-22T00:00:00Z'),
+      });
+
+      const out = await service.findByCompanySlugUnscoped(SLUG);
+      expect(out).not.toBeNull();
+      // biome-ignore lint/style/noNonNullAssertion: out asserted not-null above
+      expect(out!.channelSecret).toBe(CHANNEL_SECRET);
+      // biome-ignore lint/style/noNonNullAssertion: out asserted not-null above
+      expect(out!.channelAccessToken).toBe(ACCESS_TOKEN);
+      // biome-ignore lint/style/noNonNullAssertion: out asserted not-null above
+      expect(out!.companyId).toBe(COMPANY_ID);
+    });
+
+    it('returns null when the slug does not exist', async () => {
+      mockCompanyFindUnique.mockResolvedValueOnce(null);
+      const out = await service.findByCompanySlugUnscoped('does-not-exist');
+      expect(out).toBeNull();
+      // Channel lookup must NOT happen when the company resolution fails.
+      expect(mockFindUnique).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the company is suspended (do not service non-active tenants)', async () => {
+      mockCompanyFindUnique.mockResolvedValueOnce({ id: COMPANY_ID, status: 'suspended' });
+      const out = await service.findByCompanySlugUnscoped(SLUG);
+      expect(out).toBeNull();
+      expect(mockFindUnique).not.toHaveBeenCalled();
+    });
+
+    it('returns null when the company exists but has no LINE channel configured', async () => {
+      mockCompanyFindUnique.mockResolvedValueOnce({ id: COMPANY_ID, status: 'active' });
+      mockFindUnique.mockResolvedValueOnce(null);
+      const out = await service.findByCompanySlugUnscoped(SLUG);
+      expect(out).toBeNull();
+    });
+
+    it('throws when ciphertext fails to decrypt (key-rotation safety net)', async () => {
+      mockCompanyFindUnique.mockResolvedValueOnce({ id: COMPANY_ID, status: 'active' });
+      mockFindUnique.mockResolvedValueOnce({
+        id: CHANNEL_ROW_ID,
+        companyId: COMPANY_ID,
+        channelId: CHANNEL_ID,
+        channelSecret: 'ENC(secret)',
+        channelAccessToken: 'ENC(token)',
+        basicId: null,
+        displayName: null,
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+        updatedAt: new Date('2026-04-22T00:00:00Z'),
+      });
+      crypto.decrypt.mockResolvedValue(null);
+
+      await expect(service.findByCompanySlugUnscoped(SLUG)).rejects.toThrow(
         InternalServerErrorException,
       );
     });

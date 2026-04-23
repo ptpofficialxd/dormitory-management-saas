@@ -4,8 +4,21 @@ import fastifyHelmet from '@fastify/helmet';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
+import type { FastifyRequest } from 'fastify';
 import { AppModule } from './app.module.js';
 import { env } from './config/env.js';
+
+/**
+ * URL prefix for any route that needs the raw request body buffer
+ * (signature verification). Currently only the LINE webhook controller —
+ * extend this list (or refactor to per-route metadata) when adding more.
+ */
+const RAW_BODY_PATH_PREFIXES = ['/line/webhook/'] as const;
+
+function shouldCaptureRawBody(url: string | undefined): boolean {
+  if (!url) return false;
+  return RAW_BODY_PATH_PREFIXES.some((p) => url.startsWith(p));
+}
 
 /**
  * Bootstrap entrypoint. Fastify is the adapter (ADR — performance, no body-
@@ -28,6 +41,42 @@ async function bootstrap(): Promise<void> {
     // interceptor picks it up via `req.id`.
     genReqId: () => crypto.randomUUID(),
   });
+
+  // ---------------------------------------------------------------------
+  // Raw-body capture for HMAC-protected webhooks.
+  //
+  // The default Fastify JSON parser eagerly stringifies+parses, which
+  // destroys byte fidelity (key order, whitespace) — fatal for HMAC
+  // signature verification. We register a custom JSON content-type parser
+  // that:
+  //   - reads the body into a Buffer (`parseAs: 'buffer'`)
+  //   - stamps `req.rawBody = buf` ONLY for whitelisted prefixes (avoids
+  //     wasting memory on every single JSON request)
+  //   - parses + returns the JSON object so downstream handlers / Zod
+  //     pipes still receive the parsed value
+  //
+  // This MUST be installed BEFORE the Nest app is wired so it wins over
+  // the default parser. Touching `adapter.getInstance()` directly is the
+  // documented Fastify-adapter escape hatch for plugins not surfaced via
+  // Nest's API.
+  // ---------------------------------------------------------------------
+  adapter
+    .getInstance()
+    .addContentTypeParser(
+      'application/json',
+      { parseAs: 'buffer' },
+      (req: FastifyRequest, body: Buffer, done) => {
+        if (shouldCaptureRawBody(req.url)) {
+          (req as FastifyRequest & { rawBody?: Buffer }).rawBody = body;
+        }
+        try {
+          const json = body.length === 0 ? {} : JSON.parse(body.toString('utf8'));
+          done(null, json);
+        } catch (err) {
+          done(err as Error);
+        }
+      },
+    );
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     // Pino via Fastify would be ideal; use built-in Nest logger for now to

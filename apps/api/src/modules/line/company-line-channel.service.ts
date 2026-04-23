@@ -153,6 +153,58 @@ export class CompanyLineChannelService {
       channelAccessToken,
     } as unknown as CompanyLineChannel;
   }
+
+  /**
+   * Slug-based variant of `findByChannelIdUnscoped` — used by the LINE
+   * webhook controller because the public webhook URL we register with
+   * LINE is `/line/webhook/:companySlug` (slug is human-readable + stable
+   * across channelId rotation, easier to copy-paste into LINE Developers
+   * console than a UUID).
+   *
+   * Two-step lookup under ONE bypass-RLS boundary:
+   *   1. Resolve `Company.slug → companyId` (`Company` is RLS-scoped on its
+   *      own id, so a slug lookup before tenant context is set requires
+   *      bypass — same pattern as `AuthService.lookupCompanyBySlug`).
+   *   2. Read the per-company `CompanyLineChannel` row.
+   *
+   * Returns `null` when:
+   *   - The slug doesn't match any company, OR
+   *   - The company exists but has no LINE channel configured yet, OR
+   *   - The company is suspended/churned (hard-stop — we don't service
+   *     webhooks for non-active tenants; pause LINE OA instead).
+   *
+   * Throws `InternalServerErrorException` when a channel exists but its
+   * pgcrypto ciphertext fails to decrypt (mirrors `findByChannelIdUnscoped`).
+   */
+  async findByCompanySlugUnscoped(slug: string): Promise<CompanyLineChannel | null> {
+    const row = await withTenant({ companyId: '', bypassRls: true }, async () => {
+      const company = await prisma.company.findUnique({
+        where: { slug },
+        select: { id: true, status: true },
+      });
+      if (!company || company.status !== 'active') return null;
+      return prisma.companyLineChannel.findUnique({
+        where: { companyId: company.id },
+      });
+    });
+    if (!row) return null;
+
+    const [channelSecret, channelAccessToken] = await Promise.all([
+      this.crypto.decrypt(row.channelSecret),
+      this.crypto.decrypt(row.channelAccessToken),
+    ]);
+    if (!channelSecret || !channelAccessToken) {
+      throw new InternalServerErrorException(
+        `LINE channel for company '${slug}' is configured but its credentials failed to decrypt`,
+      );
+    }
+
+    return {
+      ...row,
+      channelSecret,
+      channelAccessToken,
+    } as unknown as CompanyLineChannel;
+  }
 }
 
 /**
