@@ -365,4 +365,75 @@ describe('CompanyLineChannelService', () => {
       );
     });
   });
+
+  describe('findByCompanyIdUnscoped', () => {
+    it('opens a bypass-RLS boundary and reads the channel by companyId', async () => {
+      mockFindUnique.mockResolvedValueOnce({
+        id: CHANNEL_ROW_ID,
+        companyId: COMPANY_ID,
+        channelId: CHANNEL_ID,
+        channelSecret: `ENC(${CHANNEL_SECRET})`,
+        channelAccessToken: `ENC(${ACCESS_TOKEN})`,
+        basicId: null,
+        displayName: null,
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+        updatedAt: new Date('2026-04-22T00:00:00Z'),
+      });
+
+      await service.findByCompanyIdUnscoped(COMPANY_ID);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
+      const ctx = mockWithTenant.mock.calls[0]![0];
+      expect(ctx).toEqual({ companyId: '', bypassRls: true });
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce resolution
+      const channelArgs = mockFindUnique.mock.calls[0]![0];
+      expect(channelArgs.where).toEqual({ companyId: COMPANY_ID });
+    });
+
+    it('returns the row with credentials decrypted for the worker', async () => {
+      mockFindUnique.mockResolvedValueOnce({
+        id: CHANNEL_ROW_ID,
+        companyId: COMPANY_ID,
+        channelId: CHANNEL_ID,
+        channelSecret: `ENC(${CHANNEL_SECRET})`,
+        channelAccessToken: `ENC(${ACCESS_TOKEN})`,
+        basicId: null,
+        displayName: null,
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+        updatedAt: new Date('2026-04-22T00:00:00Z'),
+      });
+
+      const out = await service.findByCompanyIdUnscoped(COMPANY_ID);
+      expect(out).not.toBeNull();
+      // biome-ignore lint/style/noNonNullAssertion: out asserted not-null above
+      expect(out!.channelSecret).toBe(CHANNEL_SECRET);
+      // biome-ignore lint/style/noNonNullAssertion: out asserted not-null above
+      expect(out!.channelAccessToken).toBe(ACCESS_TOKEN);
+    });
+
+    it('returns null when no channel row exists for the companyId', async () => {
+      mockFindUnique.mockResolvedValueOnce(null);
+      const out = await service.findByCompanyIdUnscoped(COMPANY_ID);
+      expect(out).toBeNull();
+    });
+
+    it('throws when ciphertext fails to decrypt (key-rotation safety net)', async () => {
+      mockFindUnique.mockResolvedValueOnce({
+        id: CHANNEL_ROW_ID,
+        companyId: COMPANY_ID,
+        channelId: CHANNEL_ID,
+        channelSecret: 'ENC(secret)',
+        channelAccessToken: 'ENC(token)',
+        basicId: null,
+        displayName: null,
+        createdAt: new Date('2026-04-22T00:00:00Z'),
+        updatedAt: new Date('2026-04-22T00:00:00Z'),
+      });
+      crypto.decrypt.mockResolvedValue(null);
+
+      await expect(service.findByCompanyIdUnscoped(COMPANY_ID)).rejects.toThrow(
+        InternalServerErrorException,
+      );
+    });
+  });
 });

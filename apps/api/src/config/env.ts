@@ -76,6 +76,21 @@ const envSchema = z.object({
    */
   PII_ENCRYPTION_KEY: z.string().min(32, 'PII_ENCRYPTION_KEY must be ≥ 32 chars'),
 
+  // ---- LIFF (LINE Front-end Framework) --------------------------------
+  /**
+   * Public LIFF URL the LINE event worker hands tenants when they message
+   * the OA before they are bound to a tenant record. We append a `?company=`
+   * query string so the LIFF page can pre-select the right tenant on open.
+   *
+   * Format: full HTTPS URL pointing at our LIFF entry, e.g.
+   *   https://liff.line.me/2000000000-aBcDeFg
+   *
+   * Defaulted to a clearly-fake placeholder so local development boots without
+   * a real LIFF id — production MUST override via env. The worker logs a
+   * warning when it serves the placeholder URL so we notice in dev.
+   */
+  LIFF_BIND_URL: z.string().url().default('https://liff.line.me/0000000000-placeholder'),
+
   // ---- Observability --------------------------------------------------
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });

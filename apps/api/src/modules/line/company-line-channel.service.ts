@@ -155,6 +155,46 @@ export class CompanyLineChannelService {
   }
 
   /**
+   * CompanyId-based variant — used by the LINE event WORKER. The worker has
+   * a `companyId` (from the BullMQ job payload, written by the controller
+   * AFTER it resolved the slug) but no slug. Saves the worker from a
+   * round-trip through the slug index.
+   *
+   * Same RLS-bypass pattern as the slug variant: `companyLineChannel` is
+   * RLS-scoped, and the worker has no request-level tenant interceptor.
+   *
+   * Returns `null` when:
+   *   - The companyId is unknown / company was deleted, OR
+   *   - The company has no LINE channel configured (admin disabled the OA
+   *     between enqueue and processing).
+   *
+   * Throws `InternalServerErrorException` on decrypt failure (mirrors the
+   * other lookups — fail loud rather than serve a half-broken channel).
+   */
+  async findByCompanyIdUnscoped(companyId: string): Promise<CompanyLineChannel | null> {
+    const row = await withTenant({ companyId: '', bypassRls: true }, () =>
+      prisma.companyLineChannel.findUnique({ where: { companyId } }),
+    );
+    if (!row) return null;
+
+    const [channelSecret, channelAccessToken] = await Promise.all([
+      this.crypto.decrypt(row.channelSecret),
+      this.crypto.decrypt(row.channelAccessToken),
+    ]);
+    if (!channelSecret || !channelAccessToken) {
+      throw new InternalServerErrorException(
+        `LINE channel for company '${companyId}' is configured but its credentials failed to decrypt`,
+      );
+    }
+
+    return {
+      ...row,
+      channelSecret,
+      channelAccessToken,
+    } as unknown as CompanyLineChannel;
+  }
+
+  /**
    * Slug-based variant of `findByChannelIdUnscoped` — used by the LINE
    * webhook controller because the public webhook URL we register with
    * LINE is `/line/webhook/:companySlug` (slug is human-readable + stable
