@@ -36,9 +36,9 @@ describe('POST /auth/login', () => {
       method: 'POST',
       url: '/auth/login',
       payload: {
-        companySlug: 'acme-dorm',
-        email: 'owner@acme-dorm.test',
-        password: 'acme-demo-pw-1234',
+        companySlug: 'easyslip-dorm',
+        email: 'easyslip@admin.com',
+        password: 'easyslipadmin1234',
       },
     });
 
@@ -54,8 +54,8 @@ describe('POST /auth/login', () => {
       method: 'POST',
       url: '/auth/login',
       payload: {
-        companySlug: 'acme-dorm',
-        email: 'owner@acme-dorm.test',
+        companySlug: 'easyslip-dorm',
+        email: 'easyslip@admin.com',
         password: 'wrong-password-123',
       },
     });
@@ -69,8 +69,8 @@ describe('POST /auth/login', () => {
       url: '/auth/login',
       payload: {
         companySlug: 'no-such-dorm',
-        email: 'owner@acme-dorm.test',
-        password: 'acme-demo-pw-1234',
+        email: 'easyslip@admin.com',
+        password: 'easyslipadmin1234',
       },
     });
     expect(res.statusCode).toBe(401);
@@ -94,9 +94,9 @@ describe('POST /auth/refresh', () => {
       method: 'POST',
       url: '/auth/login',
       payload: {
-        companySlug: 'acme-dorm',
-        email: 'owner@acme-dorm.test',
-        password: 'acme-demo-pw-1234',
+        companySlug: 'easyslip-dorm',
+        email: 'easyslip@admin.com',
+        password: 'easyslipadmin1234',
       },
     });
     const { refreshToken } = login.json();
@@ -116,9 +116,9 @@ describe('POST /auth/refresh', () => {
       method: 'POST',
       url: '/auth/login',
       payload: {
-        companySlug: 'acme-dorm',
-        email: 'owner@acme-dorm.test',
-        password: 'acme-demo-pw-1234',
+        companySlug: 'easyslip-dorm',
+        email: 'easyslip@admin.com',
+        password: 'easyslipadmin1234',
       },
     });
     const { accessToken } = login.json();
@@ -138,23 +138,23 @@ describe('GET /c/:companySlug/me — path-company guard', () => {
       method: 'POST',
       url: '/auth/login',
       payload: {
-        companySlug: 'acme-dorm',
-        email: 'owner@acme-dorm.test',
-        password: 'acme-demo-pw-1234',
+        companySlug: 'easyslip-dorm',
+        email: 'easyslip@admin.com',
+        password: 'easyslipadmin1234',
       },
     });
     const { accessToken } = login.json();
 
     const me = await app.inject({
       method: 'GET',
-      url: '/c/acme-dorm/me',
+      url: '/c/easyslip-dorm/me',
       headers: { authorization: `Bearer ${accessToken}` },
     });
 
     expect(me.statusCode).toBe(200);
     const body = me.json();
-    expect(body.company.slug).toBe('acme-dorm');
-    expect(body.user.email).toBe('owner@acme-dorm.test');
+    expect(body.company.slug).toBe('easyslip-dorm');
+    expect(body.user.email).toBe('easyslip@admin.com');
     expect(body.roles).toContain('company_owner');
   });
 
@@ -163,16 +163,16 @@ describe('GET /c/:companySlug/me — path-company guard', () => {
       method: 'POST',
       url: '/auth/login',
       payload: {
-        companySlug: 'acme-dorm',
-        email: 'owner@acme-dorm.test',
-        password: 'acme-demo-pw-1234',
+        companySlug: 'easyslip-dorm',
+        email: 'easyslip@admin.com',
+        password: 'easyslipadmin1234',
       },
     });
     const { accessToken } = login.json();
 
     const me = await app.inject({
       method: 'GET',
-      url: '/c/beta-apts/me',
+      url: '/c/ptp-apts/me',
       headers: { authorization: `Bearer ${accessToken}` },
     });
 
@@ -180,7 +180,7 @@ describe('GET /c/:companySlug/me — path-company guard', () => {
   });
 
   it('rejects missing bearer token with 401', async () => {
-    const me = await app.inject({ method: 'GET', url: '/c/acme-dorm/me' });
+    const me = await app.inject({ method: 'GET', url: '/c/easyslip-dorm/me' });
     expect(me.statusCode).toBe(401);
   });
 });

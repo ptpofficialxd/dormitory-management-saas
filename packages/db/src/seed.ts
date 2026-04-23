@@ -2,6 +2,13 @@
  * Seed 2 companies with isolated data — used for RLS isolation tests and
  * for manual QA in dev. Idempotent: re-running upserts by stable slugs.
  *
+ * Naming convention (no functional impact — purely cosmetic for QA):
+ * - "EasySlip" + "PTP" are placeholder company names. Two visually distinct
+ *   names make cross-tenant bug-hunting easier in logs ("did the query hit
+ *   EasySlip or PTP?") than alpha/beta or foo/bar.
+ * - Email domain `.test` is IETF-reserved (RFC 2606) — never resolves to a
+ *   real mailbox, so accidental notification emails in dev never leak.
+ *
  * Runs under `withTenant({ bypassRls: true })` so the seed can create rows
  * across multiple tenants without flipping between contexts.
  */
@@ -26,17 +33,17 @@ type SeedCompany = {
 
 const SEED_DATA: SeedCompany[] = [
   {
-    slug: 'acme-dorm',
-    name: 'ACME Dormitory',
+    slug: 'easyslip-dorm',
+    name: 'EasySlip Dormitory Building',
     owner: {
-      email: 'owner@acme-dorm.test',
-      password: 'acme-demo-pw-1234',
-      displayName: 'ACME Owner',
+      email: 'easyslip@admin.com',
+      password: 'easyslipadmin1234',
+      displayName: 'EasySlip Admin',
     },
     property: {
       slug: 'main-building',
-      name: 'ACME Main Building',
-      address: '99 Pracha Uthit, Thung Khru, Bangkok 10140',
+      name: 'EasySlip Main Building',
+      address: '629 Moo 6, Ban Ped, Mueang Khon Kaen, Khon Kaen 40000',
     },
     units: [
       { unitNumber: '101', floor: 1, baseRent: '5500.00', sizeSqm: '24.00' },
@@ -44,17 +51,18 @@ const SEED_DATA: SeedCompany[] = [
     ],
   },
   {
-    slug: 'beta-apts',
-    name: 'Beta Apartments',
+    slug: 'ptp-apts',
+    name: 'PTP Apartment Building',
     owner: {
-      email: 'owner@beta-apts.test',
-      password: 'beta-demo-pw-1234',
-      displayName: 'Beta Owner',
+      email: 'ptpofficialxd@gmail.com',
+      password: 'ptpofficialxd1234',
+      displayName: 'ptpofficialxd',
     },
     property: {
       slug: 'tower-a',
-      name: 'Beta Tower A',
-      address: '12/3 Sukhumvit 21, Khlong Toei Nuea, Bangkok 10110',
+      name: 'PTP Tower A',
+      address:
+        '2/120 Moo 12, Rung Rueang Lake View Village, Rob Bueng Thung Sang Rd., Nai Mueang, Mueang Khon Kaen, Khon Kaen 40000',
     },
     units: [
       { unitNumber: 'A-201', floor: 2, baseRent: '8200.00', sizeSqm: '32.00' },

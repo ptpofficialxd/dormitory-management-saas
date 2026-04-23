@@ -35,6 +35,7 @@
     "db:seed:test": "bun run --filter @dorm/db seed:test",
     "db:setup:test": "bun run --filter @dorm/db db:setup:test",
     "db:reset:test": "bun run --filter @dorm/db db:reset:test",
+    "db:reset": "bun run --filter @dorm/db db:reset",
     "db:setup": "bun run --filter @dorm/db db:setup",
     "db:test": "bun run --filter @dorm/db test",
     "shared:test": "bun run --filter @dorm/shared test",

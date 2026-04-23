@@ -55,10 +55,12 @@ async function bootstrap(): Promise<void> {
   //   - parses + returns the JSON object so downstream handlers / Zod
   //     pipes still receive the parsed value
   //
-  // This MUST be installed BEFORE the Nest app is wired so it wins over
-  // the default parser. Touching `adapter.getInstance()` directly is the
-  // documented Fastify-adapter escape hatch for plugins not surfaced via
-  // Nest's API.
+  // Pre-registered on the raw Fastify adapter (before `NestFactory.create`)
+  // so it's the parser in place when Nest initialises. The `bodyParser:
+  // false` Nest option (below) prevents Nest from registering ITS default
+  // afterwards — Fastify 4.x throws FST_ERR_CTP_ALREADY_PRESENT on a
+  // duplicate `application/json` registration (old Fastify silently
+  // overrode; strict-by-default in 4.x).
   // ---------------------------------------------------------------------
   adapter
     .getInstance()
@@ -79,6 +81,11 @@ async function bootstrap(): Promise<void> {
     );
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
+    // We registered our own JSON parser above; tell Nest to skip its
+    // default registration to avoid the duplicate-parser error.
+    // We don't accept urlencoded anywhere either, so disabling all
+    // built-in parsers is fine. Revisit if a form-post endpoint lands.
+    bodyParser: false,
     // Pino via Fastify would be ideal; use built-in Nest logger for now to
     // keep ADR-0006 portability (no runtime-specific transports).
     logger:

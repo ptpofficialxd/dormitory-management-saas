@@ -24,8 +24,8 @@ beforeAll(async () => {
   // Locate the two seeded companies.
   const [a, b] = await withTenant({ companyId: '', bypassRls: true }, () =>
     Promise.all([
-      prisma.company.findUnique({ where: { slug: 'acme-dorm' } }),
-      prisma.company.findUnique({ where: { slug: 'beta-apts' } }),
+      prisma.company.findUnique({ where: { slug: 'easyslip-dorm' } }),
+      prisma.company.findUnique({ where: { slug: 'ptp-apts' } }),
     ]),
   );
 
@@ -90,8 +90,8 @@ describe('RLS — bypass mode', () => {
     );
     expect(companies.length).toBeGreaterThanOrEqual(2);
     const slugs = companies.map((c) => c.slug).sort();
-    expect(slugs).toContain('acme-dorm');
-    expect(slugs).toContain('beta-apts');
+    expect(slugs).toContain('easyslip-dorm');
+    expect(slugs).toContain('ptp-apts');
   });
 });
 

@@ -5,9 +5,9 @@
   "type": "module",
   "description": "Dorm SaaS admin web — Next.js 15 App Router. JWT auth, path-based /c/[slug]/ routing, RBAC.",
   "scripts": {
-    "dev": "dotenv -e ../../.env -- next dev -p 3001",
+    "dev": "dotenv -e ../../.env -- next dev -p 3000",
     "build": "next build",
-    "start": "dotenv -e ../../.env -- next start -p 3001",
+    "start": "dotenv -e ../../.env -- next start -p 3000",
     "clean": "rm -rf .next .turbo tsconfig.tsbuildinfo node_modules/.cache",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

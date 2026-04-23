@@ -5,14 +5,14 @@
  *
  *   1. **Idempotency** (CLAUDE.md §3.10) — POST /payments with the same
  *      `Idempotency-Key` MUST return the SAME row, never a fresh insert.
- *   2. **Cross-tenant isolation** (CLAUDE.md §3.1, §3.2) — ACME admin
+ *   2. **Cross-tenant isolation** (CLAUDE.md §3.1, §3.2) — EASYSLIP admin
  *      cannot reach Beta invoices/payments via FK guess, GET, or LIST.
  *      RLS is the floor; service-layer FK pre-checks are the belt.
  *   3. **Audit log + invoice rollup** (CLAUDE.md §3.7, §3.4) — confirming
  *      a payment flips the invoice status atomically and writes one
  *      audit_log row per mutation.
  *
- * Pre-req: `bun run --filter @dorm/db seed` (creates acme-dorm + beta-apts
+ * Pre-req: `bun run --filter @dorm/db seed` (creates easyslip-dorm + ptp-apts
  * with one owner + one property + two units each).
  *
  * Fixtures created INLINE (not added to the seed) under
@@ -52,19 +52,19 @@ interface CompanyFixture {
   invoiceTotal: string;
 }
 
-const ACME = {
-  slug: 'acme-dorm',
-  ownerEmail: 'owner@acme-dorm.test',
-  ownerPassword: 'acme-demo-pw-1234',
+const EASYSLIP = {
+  slug: 'easyslip-dorm',
+  ownerEmail: 'easyslip@admin.com',
+  ownerPassword: 'easyslipadmin1234',
 } as const;
-const BETA = {
-  slug: 'beta-apts',
-  ownerEmail: 'owner@beta-apts.test',
-  ownerPassword: 'beta-demo-pw-1234',
+const PTP = {
+  slug: 'ptp-apts',
+  ownerEmail: 'ptpofficialxd@gmail.com',
+  ownerPassword: 'ptpofficialxd1234',
 } as const;
 
-let acme: CompanyFixture;
-let beta: CompanyFixture;
+let easyslip: CompanyFixture;
+let ptp: CompanyFixture;
 
 beforeAll(async () => {
   app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
@@ -73,8 +73,8 @@ beforeAll(async () => {
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
 
-  acme = await setupCompanyFixture(ACME);
-  beta = await setupCompanyFixture(BETA);
+  easyslip = await setupCompanyFixture(EASYSLIP);
+  ptp = await setupCompanyFixture(PTP);
 }, 30_000);
 
 afterAll(async () => {
@@ -221,16 +221,16 @@ describe('POST /c/:slug/payments — Idempotency-Key contract', () => {
   it('returns the SAME payment row on a replayed POST with the same key', async () => {
     const idemKey = `idem-${RUN}-${randomUUID()}`;
     const body = {
-      invoiceId: acme.invoiceId,
+      invoiceId: easyslip.invoiceId,
       amount: '1000.00',
       method: 'promptpay',
     };
 
     const first = await app.inject({
       method: 'POST',
-      url: `/c/${acme.slug}/payments`,
+      url: `/c/${easyslip.slug}/payments`,
       headers: {
-        authorization: `Bearer ${acme.accessToken}`,
+        authorization: `Bearer ${easyslip.accessToken}`,
         'idempotency-key': idemKey,
       },
       payload: body,
@@ -239,9 +239,9 @@ describe('POST /c/:slug/payments — Idempotency-Key contract', () => {
 
     const second = await app.inject({
       method: 'POST',
-      url: `/c/${acme.slug}/payments`,
+      url: `/c/${easyslip.slug}/payments`,
       headers: {
-        authorization: `Bearer ${acme.accessToken}`,
+        authorization: `Bearer ${easyslip.accessToken}`,
         'idempotency-key': idemKey,
       },
       payload: body,
@@ -250,7 +250,7 @@ describe('POST /c/:slug/payments — Idempotency-Key contract', () => {
     expect(second.json().id).toBe(first.json().id);
 
     // Defence-in-depth: only ONE row in the DB for this key.
-    const count = await withTenant({ companyId: acme.companyId }, () =>
+    const count = await withTenant({ companyId: easyslip.companyId }, () =>
       prisma.payment.count({ where: { idempotencyKey: idemKey } }),
     );
     expect(count).toBe(1);
@@ -259,9 +259,9 @@ describe('POST /c/:slug/payments — Idempotency-Key contract', () => {
   it('rejects POST without an Idempotency-Key with 400', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: `/c/${acme.slug}/payments`,
-      headers: { authorization: `Bearer ${acme.accessToken}` },
-      payload: { invoiceId: acme.invoiceId, amount: '500.00', method: 'cash' },
+      url: `/c/${easyslip.slug}/payments`,
+      headers: { authorization: `Bearer ${easyslip.accessToken}` },
+      payload: { invoiceId: easyslip.invoiceId, amount: '500.00', method: 'cash' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe('IdempotencyKeyRequired');
@@ -276,14 +276,14 @@ describe('Cross-tenant isolation across the billing surface', () => {
   it('refuses POST /payments against a foreign tenant invoice (RLS hides the FK)', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: `/c/${acme.slug}/payments`,
+      url: `/c/${easyslip.slug}/payments`,
       headers: {
-        authorization: `Bearer ${acme.accessToken}`,
+        authorization: `Bearer ${easyslip.accessToken}`,
         'idempotency-key': `idem-${RUN}-${randomUUID()}`,
       },
-      // ACME admin tries to pay BETA's invoice — invoice is invisible
-      // under ACME's RLS scope, service replies 400 InvalidInvoiceId.
-      payload: { invoiceId: beta.invoiceId, amount: '100.00', method: 'cash' },
+      // EASYSLIP admin tries to pay PTP's invoice — invoice is invisible
+      // under EASYSLIP's RLS scope, service replies 400 InvalidInvoiceId.
+      payload: { invoiceId: ptp.invoiceId, amount: '100.00', method: 'cash' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe('InvalidInvoiceId');
@@ -291,27 +291,27 @@ describe('Cross-tenant isolation across the billing surface', () => {
 
   it('GET /payments LIST excludes other tenants payments', async () => {
     // Seed one payment per company so both tenants have something to find.
-    await postPayment(acme, '250.00');
-    await postPayment(beta, '350.00');
+    await postPayment(easyslip, '250.00');
+    await postPayment(ptp, '350.00');
 
     const res = await app.inject({
       method: 'GET',
-      url: `/c/${acme.slug}/payments?limit=100`,
-      headers: { authorization: `Bearer ${acme.accessToken}` },
+      url: `/c/${easyslip.slug}/payments?limit=100`,
+      headers: { authorization: `Bearer ${easyslip.accessToken}` },
     });
     expect(res.statusCode).toBe(200);
     const items = res.json().items as Array<{ companyId: string }>;
     expect(items.length).toBeGreaterThan(0);
-    expect(items.every((p) => p.companyId === acme.companyId)).toBe(true);
+    expect(items.every((p) => p.companyId === easyslip.companyId)).toBe(true);
   });
 
   it('GET /payments/:id returns 404 when the id belongs to another tenant', async () => {
-    const betaPayment = await postPayment(beta, '777.00');
+    const ptpPayment = await postPayment(ptp, '777.00');
 
     const res = await app.inject({
       method: 'GET',
-      url: `/c/${acme.slug}/payments/${betaPayment.id}`,
-      headers: { authorization: `Bearer ${acme.accessToken}` },
+      url: `/c/${easyslip.slug}/payments/${ptpPayment.id}`,
+      headers: { authorization: `Bearer ${easyslip.accessToken}` },
     });
     expect(res.statusCode).toBe(404);
   });
@@ -325,7 +325,7 @@ describe('Audit log + invoice rollup on confirm', () => {
   it('flips invoice.status to `paid` AND writes an audit_log row on confirm', async () => {
     // Create a fresh fixture so the rollup math is deterministic — full
     // amount = the invoice total.
-    const fixture = await setupCompanyFixture(ACME);
+    const fixture = await setupCompanyFixture(EASYSLIP);
     const fullAmount = fixture.invoiceTotal;
 
     const create = await app.inject({
@@ -374,7 +374,7 @@ describe('Audit log + invoice rollup on confirm', () => {
   });
 
   it('rejecting a pending payment writes an audit_log row + leaves invoice unchanged', async () => {
-    const fixture = await setupCompanyFixture(ACME);
+    const fixture = await setupCompanyFixture(EASYSLIP);
     const create = await app.inject({
       method: 'POST',
       url: `/c/${fixture.slug}/payments`,
