@@ -1,6 +1,8 @@
 'use client';
 
+import { useRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
+import type { Action, Resource } from '@dorm/shared/rbac';
 import {
   Building2,
   ChevronRight,
@@ -29,15 +31,12 @@ import { type ComponentType, type ReactNode, useState } from 'react';
  *
  * Server/Client split:
  * - This component is `'use client'` because it uses `useState` (mobile
- *   drawer) and `usePathname` (active nav highlight + breadcrumb derivation).
- * - The Server layout wraps this component, runs the auth claims check, and
- *   passes the rendered `<LogoutButton />` Server Component as the
- *   `logoutSlot` prop. This keeps the logout flow a Server Component (so the
- *   `<form action={serverAction}>` pattern keeps progressive enhancement).
- *
- * The nav items list lives here (not in props) because there's only ever one
- * admin shell. If we ever ship a different nav (e.g. read-only investor
- * portal) we'd refactor to take items as a prop.
+ *   drawer), `usePathname` (active nav highlight + breadcrumb), and
+ *   `useRole` (filters the nav items by the current user's permissions —
+ *   table-driven via @dorm/shared/rbac).
+ * - The Server `layout.tsx` wraps this component, runs the auth claims
+ *   check, hands `<RbacProvider>` to feed the role context, and passes
+ *   `<LogoutButton />` (Server Component) as the `logoutSlot` prop.
  */
 
 interface NavItem {
@@ -46,21 +45,90 @@ interface NavItem {
   icon: ComponentType<{ className?: string }>;
   /** false → render disabled with "เร็วๆ นี้" badge — page not yet built. */
   ready: boolean;
+  /**
+   * Permission required to even SEE this item in the sidebar. `undefined` =
+   * no gate (everyone in any role sees it — used for Dashboard). The check
+   * is filtering only — don't rely on it as a security boundary; the API
+   * enforces the same matrix on every endpoint.
+   */
+  requires?: { action: Action; resource: Resource };
 }
 
 function buildNavItems(slug: string): NavItem[] {
   const base = `/c/${slug}`;
   return [
-    { label: 'แดชบอร์ด', href: `${base}/dashboard`, icon: LayoutDashboard, ready: true },
-    { label: 'อาคาร', href: `${base}/properties`, icon: Building2, ready: false },
-    { label: 'ห้อง', href: `${base}/units`, icon: DoorOpen, ready: false },
-    { label: 'ผู้เช่า', href: `${base}/tenants`, icon: Users, ready: false },
-    { label: 'สัญญา', href: `${base}/contracts`, icon: FileText, ready: false },
-    { label: 'ใบแจ้งหนี้', href: `${base}/invoices`, icon: Receipt, ready: false },
-    { label: 'การชำระเงิน', href: `${base}/payments`, icon: Wallet, ready: false },
-    { label: 'แจ้งซ่อม', href: `${base}/maintenance`, icon: Wrench, ready: false },
-    { label: 'ประกาศ', href: `${base}/announcements`, icon: Megaphone, ready: false },
-    { label: 'ตั้งค่า', href: `${base}/settings`, icon: Settings, ready: false },
+    {
+      label: 'แดชบอร์ด',
+      href: `${base}/dashboard`,
+      icon: LayoutDashboard,
+      ready: true,
+      // No requires — every authenticated admin role lands here.
+    },
+    {
+      label: 'อาคาร',
+      href: `${base}/properties`,
+      icon: Building2,
+      ready: false,
+      requires: { action: 'read', resource: 'property' },
+    },
+    {
+      label: 'ห้อง',
+      href: `${base}/units`,
+      icon: DoorOpen,
+      ready: false,
+      requires: { action: 'read', resource: 'unit' },
+    },
+    {
+      label: 'ผู้เช่า',
+      href: `${base}/tenants`,
+      icon: Users,
+      ready: false,
+      requires: { action: 'read', resource: 'tenant_user' },
+    },
+    {
+      label: 'สัญญา',
+      href: `${base}/contracts`,
+      icon: FileText,
+      ready: false,
+      requires: { action: 'read', resource: 'contract' },
+    },
+    {
+      label: 'ใบแจ้งหนี้',
+      href: `${base}/invoices`,
+      icon: Receipt,
+      ready: false,
+      requires: { action: 'read', resource: 'invoice' },
+    },
+    {
+      label: 'การชำระเงิน',
+      href: `${base}/payments`,
+      icon: Wallet,
+      ready: false,
+      requires: { action: 'read', resource: 'payment' },
+    },
+    {
+      label: 'แจ้งซ่อม',
+      href: `${base}/maintenance`,
+      icon: Wrench,
+      ready: false,
+      requires: { action: 'read', resource: 'maintenance_ticket' },
+    },
+    {
+      label: 'ประกาศ',
+      href: `${base}/announcements`,
+      icon: Megaphone,
+      ready: false,
+      requires: { action: 'read', resource: 'announcement' },
+    },
+    {
+      label: 'ตั้งค่า',
+      href: `${base}/settings`,
+      icon: Settings,
+      ready: false,
+      // company:update is owner-only in the shared matrix — staff +
+      // property_manager won't see this entry at all.
+      requires: { action: 'update', resource: 'company' },
+    },
   ];
 }
 
@@ -82,10 +150,9 @@ export interface AdminShellProps {
   companySlug: string;
   email: string;
   /**
-   * `<LogoutButton />` rendered in the Server layout and passed in. We accept
-   * a ReactNode (not the component itself) so AdminShell stays a pure Client
-   * Component — Server Components can't be imported, only handed in as
-   * children/props.
+   * `<LogoutButton />` rendered in the Server layout and passed in. Accepted
+   * as ReactNode (not the component itself) so AdminShell stays a pure
+   * Client Component — Server Components can't be imported, only handed in.
    */
   logoutSlot: ReactNode;
   children: ReactNode;
@@ -94,7 +161,13 @@ export interface AdminShellProps {
 export function AdminShell({ companySlug, email, logoutSlot, children }: AdminShellProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const navItems = buildNavItems(companySlug);
+  const { can } = useRole();
+
+  // Filter nav by permission — the matrix is the single source of truth.
+  // Items without `requires` are always shown (e.g. Dashboard).
+  const navItems = buildNavItems(companySlug).filter(
+    (item) => !item.requires || can(item.requires.action, item.requires.resource),
+  );
 
   // Derive breadcrumb segments from the path after /c/[slug]/.
   const slugPrefix = `/c/${companySlug}`;

@@ -1,6 +1,7 @@
 import { AdminShell } from '@/components/shell/admin-shell';
 import { verifyAdminAccessToken } from '@/lib/auth';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
+import { RbacProvider } from '@/lib/rbac';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { LogoutButton } from './_components/logout-button';
@@ -17,11 +18,14 @@ import { LogoutButton } from './_components/logout-button';
  *   3. Local dev sometimes runs without middleware (route.ts files etc.) —
  *      this guard keeps things consistent.
  *
- * Visual chrome (sidebar / topbar / breadcrumb / mobile drawer) lives in
- * `<AdminShell>` (Client Component). We pass `<LogoutButton />` (a Server
- * Component) in via the `logoutSlot` prop so its `<form action={serverAction}>`
- * keeps progressive enhancement — Client Components can't import Server
- * Components, but they can render them when handed in as ReactNode.
+ * Composition:
+ *   - `<RbacProvider>` (Client) wraps EVERYTHING below so any descendant
+ *     can call `useRole()` / `<Can>`. Roles come from the verified JWT —
+ *     never trust a user-supplied role.
+ *   - `<AdminShell>` (Client) renders sidebar + topbar + breadcrumb. It
+ *     uses `useRole()` to filter sidebar items by permission.
+ *   - `<LogoutButton />` (Server) is passed as `logoutSlot` so its
+ *     `<form action={serverAction}>` keeps progressive enhancement.
  */
 export default async function CompanyLayout({
   children,
@@ -42,8 +46,10 @@ export default async function CompanyLayout({
   }
 
   return (
-    <AdminShell companySlug={companySlug} email={claims.email} logoutSlot={<LogoutButton />}>
-      {children}
-    </AdminShell>
+    <RbacProvider roles={claims.roles}>
+      <AdminShell companySlug={companySlug} email={claims.email} logoutSlot={<LogoutButton />}>
+        {children}
+      </AdminShell>
+    </RbacProvider>
   );
 }
