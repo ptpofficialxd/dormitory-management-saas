@@ -116,6 +116,24 @@ enum PaymentStatus {
   @@map("payment_status")
 }
 
+// `pending`   — code generated, not yet redeemed
+// `redeemed`  — successfully bound to a LINE user (terminal, single-use)
+// `expired`   — TTL elapsed without redemption (terminal)
+// `revoked`   — admin revoked manually (terminal; e.g. tenant lost the code)
+//
+// Why an explicit `expired` state instead of computing from `expiresAt`:
+// the redeem endpoint needs O(1) atomic CAS on `status = 'pending'`, and a
+// background sweep (or first-touch transition) flips stale `pending` rows to
+// `expired` for clean audit trails + admin UI listing.
+enum TenantInviteStatus {
+  pending
+  redeemed
+  expired
+  revoked
+
+  @@map("tenant_invite_status")
+}
+
 // =========================================================================
 // Company — tenant root (every other tenant-owned row references this id)
 // =========================================================================
@@ -160,6 +178,7 @@ model Company {
   // a name/role per row, expose channel selector in admin UI.
   lineChannel     CompanyLineChannel?
   webhookEvents   WebhookEvent[]
+  tenantInvites   TenantInvite[]
 
   @@index([status])
   @@map("company")
@@ -181,11 +200,12 @@ model User {
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  company            Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  roleAssignments    RoleAssignment[]
-  auditLogs          AuditLog[]       @relation("AuditLogActor")
-  readingsTakenBy    Reading[]        @relation("ReadingTakenBy")
-  paymentsConfirmed  Payment[]        @relation("PaymentConfirmer")
+  company             Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  roleAssignments     RoleAssignment[]
+  auditLogs           AuditLog[]       @relation("AuditLogActor")
+  readingsTakenBy     Reading[]        @relation("ReadingTakenBy")
+  paymentsConfirmed   Payment[]        @relation("PaymentConfirmer")
+  tenantInvitesIssued TenantInvite[]   @relation("TenantInviteIssuer")
 
   // Email uniqueness scoped to company — same email may register at multiple dorms.
   @@unique([companyId, email])
@@ -317,10 +337,11 @@ model Tenant {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  company   Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  company   Company        @relation(fields: [companyId], references: [id], onDelete: Restrict)
   contracts Contract[]
   invoices  Invoice[]
   payments  Payment[]
+  invites   TenantInvite[]
 
   // One tenant record per (company, LINE userId). Same LINE user may be a
   // tenant at multiple dorms — each gets a separate row.
@@ -669,4 +690,86 @@ model WebhookEvent {
   // Diagnostics path: "show me everything that came in on this LINE channel".
   @@index([channelId])
   @@map("webhook_event")
+}
+
+// =========================================================================
+// TenantInvite — short-lived single-use code that binds a LINE user to an
+// existing Tenant row.
+//
+// Flow (Task #41):
+//   1. Admin creates a Tenant (no lineUserId), then POSTs a generate-invite
+//      request. Service returns the plaintext code ONCE; only `codeHash` is
+//      stored. Admin shares the code with the human (paper hand-off, SMS,
+//      etc.) — out-of-band, never via LINE.
+//   2. Tenant opens the LIFF app, types the code. LIFF posts to `/peek` to
+//      preview redacted tenant info ("ห้อง 305 — น.ส. ก****"), then `/redeem`
+//      with their LINE idToken.
+//   3. Server verifies idToken → derives lineUserId → atomically CAS
+//      (status='pending' → 'redeemed') AND writes lineUserId to Tenant. Both
+//      writes share one transaction; partial failure is impossible.
+//
+// Token model (8-char base32 displayed as `K7M3-XQ2P`, ~40 bits entropy):
+//   - Plaintext NEVER persists. We store only the SHA-256 hex digest.
+//   - `codePrefix` (first 4 chars of plaintext) is kept for admin "reissue
+//      the one starting with K7M3..." UX without breaking secrecy of the
+//      remaining 4 chars.
+//   - 7-day TTL — long enough for postal hand-off, short enough that a lost
+//     code can't be hoarded for months.
+//
+// Conflict policy (locked in Task #41 design Q3):
+//   If the inbound `lineUserId` is already bound to a *different* Tenant in
+//   the same company, redeem rejects with `BIND_CONFLICT`. Audit trail keeps
+//   the attempt; admin must manually unbind the colliding tenant before the
+//   invite can succeed. We do NOT auto-rebind — silent rebind would corrupt
+//   the Contract → Invoice → Payment chain that hangs off the older Tenant.
+//
+// RLS:
+//   Admin endpoints run inside `withTenant({companyId})` so RLS scopes the
+//   row by `company_id`. Public peek/redeem endpoints have no tenant context
+//   yet — they look up the invite by `code_prefix` under `bypassRls: true`
+//   (read-only narrow scope), then SWITCH into `withTenant({companyId})`
+//   for the actual mutate (CAS + Tenant.lineUserId update + AuditLog).
+// =========================================================================
+
+model TenantInvite {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId            String             @map("company_id") @db.Uuid
+  tenantId             String             @map("tenant_id") @db.Uuid
+  // SHA-256 hex digest of the plaintext code (lowercase). 64 chars exactly.
+  codeHash             String             @map("code_hash") @db.Char(64)
+  // First 4 chars of the plaintext code. Used for admin lookup ergonomics
+  // (the code shown is `K7M3-XQ2P`; admin can search by `K7M3` to find the
+  // row when a tenant calls in saying "the code you gave me starts with…").
+  // Storing this is safe: 4 base32 chars = 20 bits — brute-forcing the
+  // remaining 4 chars (~20 bits) still requires guessing the hash, and the
+  // single-use CAS prevents online enumeration.
+  codePrefix           String             @map("code_prefix") @db.Char(4)
+  status               TenantInviteStatus @default(pending)
+  expiresAt            DateTime           @map("expires_at") @db.Timestamptz(6)
+  // Set on terminal transition into `redeemed` (atomic with status flip).
+  // For `expired` / `revoked` we leave NULL — those have their own audit row.
+  redeemedAt           DateTime?          @map("redeemed_at") @db.Timestamptz(6)
+  // The LINE userId that consumed the code. Kept on the invite row for
+  // forensics + idempotent replay (if the redeem POST is retried, we can
+  // detect "already redeemed by THIS line user → return success" vs
+  // "already redeemed by SOMEONE ELSE → 409 conflict").
+  redeemedByLineUserId String?            @map("redeemed_by_line_user_id") @db.VarChar(64)
+  createdAt            DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  // Admin user who issued the invite. Restrict (not Cascade): keeping the
+  // audit trail intact matters more than easy user deletion. If we ever
+  // soft-delete users, this still works.
+  createdByUserId      String             @map("created_by_user_id") @db.Uuid
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy User  @relation("TenantInviteIssuer", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  // Admin list path: "show me all pending invites for this company, newest first".
+  @@index([companyId, status, createdAt(sort: Desc)])
+  // Admin per-tenant path: "what invites exist for tenant X?"
+  @@index([tenantId])
+  // Public lookup path: peek/redeem hits this index by codePrefix to narrow
+  // the candidate set before constant-time hash compare across the matches.
+  @@index([codePrefix, status])
+  @@map("tenant_invite")
 }

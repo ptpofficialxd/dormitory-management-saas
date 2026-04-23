@@ -91,6 +91,20 @@ const envSchema = z.object({
    */
   LIFF_BIND_URL: z.string().url().default('https://liff.line.me/0000000000-placeholder'),
 
+  /**
+   * LINE Login channel ID — the channel ID of the LIFF app (NOT the OA
+   * messaging channel from `CompanyLineChannel`). Used as the `aud` claim
+   * when verifying `liff.getIDToken()` JWTs at the tenant-invite redeem
+   * boundary (Task #41). Required for LIFF idToken verification to succeed
+   * — invalid `aud` rejects the token (LINE signs with `aud=channelId`).
+   *
+   * Format: numeric string, typically 10–13 digits (e.g. `1234567890`).
+   * Defaulted to a clearly-fake placeholder so local dev boots without a
+   * real LIFF app — production MUST override. Redeem will fail loudly with
+   * 401 INVALID_LINE_ID_TOKEN if the placeholder is ever used in prod.
+   */
+  LIFF_LOGIN_CHANNEL_ID: z.string().min(1).default('0000000000-placeholder'),
+
   // ---- Observability --------------------------------------------------
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 });

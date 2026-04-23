@@ -189,6 +189,27 @@ CREATE POLICY tenant_isolation ON company_line_channel
   USING (app_rls_bypass() OR company_id = app_current_company_id())
   WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
 
+-- ==== tenant_invite ======================================================
+-- Admin endpoints (generate / revoke / list) run inside withTenant({companyId})
+-- so the standard policy fires and scopes by company_id.
+--
+-- Public LIFF endpoints (peek / redeem) have NO tenant context at request
+-- entry — the LIFF user types a code, the server has to look it up by
+-- code_prefix BEFORE it knows which company. That single read uses
+-- `bypassRls: true` (deliberately narrow scope: SELECT WHERE code_prefix = …
+-- AND status = 'pending'), then the response handler SWITCHES into
+-- withTenant({companyId}) using the row's company_id for the actual mutate
+-- (CAS status flip + tenant.line_user_id update + audit_log INSERT). So the
+-- standard policy below covers admin + the post-resolve mutate path; the
+-- bypass branch covers the pre-resolve lookup + ops scripts.
+ALTER TABLE tenant_invite ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_invite FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON tenant_invite;
+CREATE POLICY tenant_isolation ON tenant_invite
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
 -- ==== webhook_event ======================================================
 -- Webhook controller resolves channelId → companyId via the bypass-RLS
 -- CompanyLineChannel lookup, then SWITCHES into withTenant({companyId}) for

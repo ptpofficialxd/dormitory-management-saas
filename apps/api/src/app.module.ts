@@ -18,6 +18,7 @@ import { MeterModule } from './modules/meter/meter.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
 import { ReadingModule } from './modules/reading/reading.module.js';
 import { StorageModule } from './modules/storage/storage.module.js';
+import { TenantInviteModule } from './modules/tenant-invite/tenant-invite.module.js';
 import { TenantModule } from './modules/tenant/tenant.module.js';
 import { UnitModule } from './modules/unit/unit.module.js';
 
@@ -55,6 +56,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
     PropertyModule,
     UnitModule,
     TenantModule,
+    TenantInviteModule,
     ContractModule,
     MeterModule,
     ReadingModule,
