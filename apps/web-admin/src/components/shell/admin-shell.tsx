@@ -1,0 +1,256 @@
+'use client';
+
+import { cn } from '@/lib/utils';
+import {
+  Building2,
+  ChevronRight,
+  DoorOpen,
+  FileText,
+  LayoutDashboard,
+  Megaphone,
+  Menu,
+  Receipt,
+  Settings,
+  Users,
+  Wallet,
+  Wrench,
+  X,
+} from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { type ComponentType, type ReactNode, useState } from 'react';
+
+/**
+ * AdminShell — top-level chrome for every page under /c/[companySlug]/*.
+ *
+ * Layout: fixed sidebar (left) + topbar (top, with breadcrumb + user menu) +
+ * scrollable main content. Mobile (≤md): sidebar collapses behind a backdrop
+ * drawer toggled by the hamburger button.
+ *
+ * Server/Client split:
+ * - This component is `'use client'` because it uses `useState` (mobile
+ *   drawer) and `usePathname` (active nav highlight + breadcrumb derivation).
+ * - The Server layout wraps this component, runs the auth claims check, and
+ *   passes the rendered `<LogoutButton />` Server Component as the
+ *   `logoutSlot` prop. This keeps the logout flow a Server Component (so the
+ *   `<form action={serverAction}>` pattern keeps progressive enhancement).
+ *
+ * The nav items list lives here (not in props) because there's only ever one
+ * admin shell. If we ever ship a different nav (e.g. read-only investor
+ * portal) we'd refactor to take items as a prop.
+ */
+
+interface NavItem {
+  label: string;
+  href: string;
+  icon: ComponentType<{ className?: string }>;
+  /** false → render disabled with "เร็วๆ นี้" badge — page not yet built. */
+  ready: boolean;
+}
+
+function buildNavItems(slug: string): NavItem[] {
+  const base = `/c/${slug}`;
+  return [
+    { label: 'แดชบอร์ด', href: `${base}/dashboard`, icon: LayoutDashboard, ready: true },
+    { label: 'อาคาร', href: `${base}/properties`, icon: Building2, ready: false },
+    { label: 'ห้อง', href: `${base}/units`, icon: DoorOpen, ready: false },
+    { label: 'ผู้เช่า', href: `${base}/tenants`, icon: Users, ready: false },
+    { label: 'สัญญา', href: `${base}/contracts`, icon: FileText, ready: false },
+    { label: 'ใบแจ้งหนี้', href: `${base}/invoices`, icon: Receipt, ready: false },
+    { label: 'การชำระเงิน', href: `${base}/payments`, icon: Wallet, ready: false },
+    { label: 'แจ้งซ่อม', href: `${base}/maintenance`, icon: Wrench, ready: false },
+    { label: 'ประกาศ', href: `${base}/announcements`, icon: Megaphone, ready: false },
+    { label: 'ตั้งค่า', href: `${base}/settings`, icon: Settings, ready: false },
+  ];
+}
+
+/** Thai labels for breadcrumb segments. Falls back to the raw slug if unknown. */
+const BREADCRUMB_LABELS: Record<string, string> = {
+  dashboard: 'แดชบอร์ด',
+  properties: 'อาคาร',
+  units: 'ห้อง',
+  tenants: 'ผู้เช่า',
+  contracts: 'สัญญา',
+  invoices: 'ใบแจ้งหนี้',
+  payments: 'การชำระเงิน',
+  maintenance: 'แจ้งซ่อม',
+  announcements: 'ประกาศ',
+  settings: 'ตั้งค่า',
+};
+
+export interface AdminShellProps {
+  companySlug: string;
+  email: string;
+  /**
+   * `<LogoutButton />` rendered in the Server layout and passed in. We accept
+   * a ReactNode (not the component itself) so AdminShell stays a pure Client
+   * Component — Server Components can't be imported, only handed in as
+   * children/props.
+   */
+  logoutSlot: ReactNode;
+  children: ReactNode;
+}
+
+export function AdminShell({ companySlug, email, logoutSlot, children }: AdminShellProps) {
+  const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const navItems = buildNavItems(companySlug);
+
+  // Derive breadcrumb segments from the path after /c/[slug]/.
+  const slugPrefix = `/c/${companySlug}`;
+  const segments = pathname?.startsWith(slugPrefix)
+    ? pathname.slice(slugPrefix.length).split('/').filter(Boolean)
+    : [];
+
+  return (
+    <div className="flex min-h-screen bg-muted/20">
+      {/* Mobile backdrop — click to dismiss the drawer. */}
+      {mobileOpen ? (
+        <button
+          type="button"
+          aria-label="ปิดเมนู"
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+        />
+      ) : null}
+
+      {/* Sidebar.
+          - Desktop (md+): static, always visible.
+          - Mobile: fixed-position drawer; transform translates off-screen
+            when closed. CSS-only transition; no JS animation lib needed. */}
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-50 flex w-60 flex-col border-r bg-background transition-transform md:static md:translate-x-0',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+        )}
+      >
+        <div className="flex h-14 items-center justify-between border-b px-4">
+          <Link href={`${slugPrefix}/dashboard`} className="text-sm font-semibold tracking-tight">
+            Dorm Admin
+          </Link>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(false)}
+            aria-label="ปิดเมนู"
+            className="rounded-md p-1 hover:bg-accent md:hidden"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto p-2" aria-label="หลัก">
+          <ul className="space-y-0.5">
+            {navItems.map((item) => (
+              <li key={item.href}>
+                <NavRow
+                  item={item}
+                  active={pathname === item.href}
+                  onNavigate={() => setMobileOpen(false)}
+                />
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <div className="border-t px-4 py-3 text-[11px] text-muted-foreground">
+          <p className="font-medium">Dorm SaaS · MVP</p>
+          <p className="mt-0.5">v0.0.1</p>
+        </div>
+      </aside>
+
+      {/* Main column — topbar + scrollable page content. */}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              aria-label="เปิดเมนู"
+              className="rounded-md p-1 hover:bg-accent md:hidden"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <Breadcrumb companySlug={companySlug} segments={segments} />
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className="hidden max-w-[160px] truncate text-xs text-muted-foreground sm:inline"
+              title={email}
+            >
+              {email}
+            </span>
+            {logoutSlot}
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
+      </div>
+    </div>
+  );
+}
+
+// -------------------------------------------------------------------------
+// Subcomponents
+// -------------------------------------------------------------------------
+
+function NavRow({
+  item,
+  active,
+  onNavigate,
+}: {
+  item: NavItem;
+  active: boolean;
+  onNavigate: () => void;
+}) {
+  const Icon = item.icon;
+  const baseClass = 'flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors';
+
+  // Disabled / "Soon" — render a span (not a Link) so it's not navigable.
+  if (!item.ready) {
+    return (
+      <span
+        aria-disabled="true"
+        className={cn(baseClass, 'cursor-not-allowed text-muted-foreground/60')}
+      >
+        <Icon className="h-4 w-4 shrink-0" />
+        <span className="flex-1 truncate">{item.label}</span>
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          เร็วๆ นี้
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <Link
+      href={item.href}
+      onClick={onNavigate}
+      className={cn(
+        baseClass,
+        active
+          ? 'bg-accent font-medium text-accent-foreground'
+          : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="truncate">{item.label}</span>
+    </Link>
+  );
+}
+
+function Breadcrumb({ companySlug, segments }: { companySlug: string; segments: string[] }) {
+  return (
+    <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1 text-sm">
+      <span className="truncate font-semibold text-foreground">{companySlug}</span>
+      {segments.map((seg, i) => (
+        <span
+          key={`${i}-${seg}`}
+          className="flex shrink-0 items-center gap-1 text-muted-foreground"
+        >
+          <ChevronRight className="h-3 w-3" />
+          <span className="truncate">{BREADCRUMB_LABELS[seg] ?? seg}</span>
+        </span>
+      ))}
+    </nav>
+  );
+}

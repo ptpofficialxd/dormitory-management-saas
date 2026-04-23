@@ -1,3 +1,4 @@
+import { AdminShell } from '@/components/shell/admin-shell';
 import { verifyAdminAccessToken } from '@/lib/auth';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
 import { redirect } from 'next/navigation';
@@ -16,7 +17,11 @@ import { LogoutButton } from './_components/logout-button';
  *   3. Local dev sometimes runs without middleware (route.ts files etc.) —
  *      this guard keeps things consistent.
  *
- * Task #59 will replace the bare `<header>` with a real sidebar + topbar.
+ * Visual chrome (sidebar / topbar / breadcrumb / mobile drawer) lives in
+ * `<AdminShell>` (Client Component). We pass `<LogoutButton />` (a Server
+ * Component) in via the `logoutSlot` prop so its `<form action={serverAction}>`
+ * keeps progressive enhancement — Client Components can't import Server
+ * Components, but they can render them when handed in as ReactNode.
  */
 export default async function CompanyLayout({
   children,
@@ -37,21 +42,8 @@ export default async function CompanyLayout({
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b bg-background">
-        <div className="container flex h-14 items-center justify-between gap-4">
-          <span className="text-sm font-semibold tracking-tight">
-            Dorm Admin <span className="text-muted-foreground">/ {companySlug}</span>
-          </span>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-muted-foreground sm:inline" title={claims.email}>
-              {claims.email}
-            </span>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
-      <main className="container flex-1 py-6">{children}</main>
-    </div>
+    <AdminShell companySlug={companySlug} email={claims.email} logoutSlot={<LogoutButton />}>
+      {children}
+    </AdminShell>
   );
 }
