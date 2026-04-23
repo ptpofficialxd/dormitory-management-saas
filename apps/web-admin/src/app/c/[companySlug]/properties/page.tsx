@@ -1,14 +1,14 @@
-import { Plus } from 'lucide-react';
-import type { Metadata } from 'next';
-import Link from 'next/link';
-import { redirect } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ApiError, api } from '@/lib/api';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
 import { propertyPageSchema } from '@/queries/properties';
-import { PropertiesTable } from './_components/properties-table';
+import { Plus } from 'lucide-react';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { AddPropertyButton } from './_components/add-property-button';
+import { PropertiesTable } from './_components/properties-table';
 
 export const metadata: Metadata = {
   title: 'อาคาร',
@@ -47,7 +47,10 @@ export default async function PropertiesPage({ params, searchParams }: Propertie
       token,
     });
   } catch (err) {
-    if (err instanceof ApiError && (err.statusCode === 401 || err.code === 'UnauthorizedException')) {
+    if (
+      err instanceof ApiError &&
+      (err.statusCode === 401 || err.code === 'UnauthorizedException')
+    ) {
       redirect(`/login?next=/c/${companySlug}/properties`);
     }
     // Surface other errors as a friendly empty state — better than crashing.
@@ -72,8 +75,7 @@ export default async function PropertiesPage({ params, searchParams }: Propertie
         <div>
           <h1 className="text-xl font-semibold tracking-tight">อาคาร / โครงการ</h1>
           <p className="text-sm text-muted-foreground">
-            จัดการอาคารและโครงการของหอพัก ({page.items.length}{' '}
-            {page.nextCursor ? '+ ' : ''}รายการ)
+            จัดการอาคารและโครงการของหอพัก ({page.items.length} {page.nextCursor ? '+ ' : ''}รายการ)
           </p>
         </div>
         <AddPropertyButton companySlug={companySlug} />
@@ -84,7 +86,9 @@ export default async function PropertiesPage({ params, searchParams }: Propertie
       {page.nextCursor ? (
         <div className="flex justify-end">
           <Button asChild variant="outline" size="sm">
-            <Link href={`/c/${companySlug}/properties?cursor=${encodeURIComponent(page.nextCursor)}`}>
+            <Link
+              href={`/c/${companySlug}/properties?cursor=${encodeURIComponent(page.nextCursor)}`}
+            >
               หน้าถัดไป
               <Plus className="ml-1 h-3 w-3" />
             </Link>

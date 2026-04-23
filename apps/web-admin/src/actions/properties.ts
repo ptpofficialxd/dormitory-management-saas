@@ -1,7 +1,5 @@
 'use server';
 
-import { redirect } from 'next/navigation';
-import { revalidatePath } from 'next/cache';
 import { ApiError, api } from '@/lib/api';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
 import {
@@ -9,6 +7,8 @@ import {
   createPropertyInputSchema,
   propertyWireSchema,
 } from '@/queries/properties';
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 
 /**
  * Server Actions for property mutations.
@@ -53,12 +53,7 @@ export async function createPropertyAction(
   }
 
   try {
-    await api.post(
-      `/c/${companySlug}/properties`,
-      parsed.data,
-      propertyWireSchema,
-      { token },
-    );
+    await api.post(`/c/${companySlug}/properties`, parsed.data, propertyWireSchema, { token });
   } catch (err) {
     if (err instanceof ApiError) {
       if (err.statusCode === 409 || err.code === 'ConflictException') {

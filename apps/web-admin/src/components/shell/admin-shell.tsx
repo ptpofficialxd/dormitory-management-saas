@@ -68,7 +68,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'อาคาร',
       href: `${base}/properties`,
       icon: Building2,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'property' },
     },
     {
