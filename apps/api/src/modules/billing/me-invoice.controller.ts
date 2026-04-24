@@ -24,6 +24,9 @@ import { InvoiceService } from './invoice.service.js';
  *      passing `?tenantId=other-uuid` cannot peek at a same-company sibling.
  *   3. `getByIdForTenant` filters on (id, tenantId) — cross-tenant probes
  *      get a 404 (NEVER 403 — we do not leak existence).
+ *   4. `listForTenant` / `getByIdForTenant` ALSO hide `draft` + `void`
+ *      invoices — drafts are admin-only pre-commit work, voided invoices
+ *      no longer obligate the tenant. Same 404 posture for guessed URLs.
  *
  * No write endpoints here — payment creation lives in MePaymentController
  * (Task #77) so the auth-domain split stays clean (one controller per
@@ -39,8 +42,11 @@ export class MeInvoiceController {
     @ZodQuery(listInvoicesQuerySchema) query: ListInvoicesQuery,
     @CurrentTenant() tenant: TenantJwtClaims,
   ): Promise<CursorPage<Invoice>> {
-    // Force tenantId to the JWT subject, ignoring any caller-supplied value.
-    return this.invoiceService.list({ ...query, tenantId: tenant.sub });
+    // Use the tenant-scoped variant — pins tenantId to JWT.sub AND hides
+    // `draft` / `void` statuses (which are admin-only). Caller-supplied
+    // `tenantId` in the query is ignored by `listForTenant` for the same
+    // defence-in-depth reason as `getByIdForTenant`.
+    return this.invoiceService.listForTenant(query, tenant.sub);
   }
 
   @Get(':id')

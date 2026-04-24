@@ -203,7 +203,7 @@ describe('InvoiceService', () => {
 
   describe('getByIdForTenant — LIFF /me/invoices/:id scope', () => {
     it('queries with both id AND tenantId', async () => {
-      const row = { id: INVOICE_ID, tenantId: TENANT_ID, items: [] };
+      const row = { id: INVOICE_ID, tenantId: TENANT_ID, status: 'issued', items: [] };
       mockInvoiceFindFirst.mockResolvedValueOnce(row);
 
       await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).resolves.toBe(row);
@@ -228,6 +228,116 @@ describe('InvoiceService', () => {
       await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('throws NotFoundException when invoice status is draft (admin-only state)', async () => {
+      // Tenant guesses / holds URL of a draft row → same 404 as if it didn't
+      // exist. NEVER 403 (no leak of "this id is real but hidden").
+      mockInvoiceFindFirst.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        tenantId: TENANT_ID,
+        status: 'draft',
+        items: [],
+      });
+      await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException when invoice status is void', async () => {
+      // Voided invoice no longer obligates the tenant — shouldn't surface.
+      mockInvoiceFindFirst.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        tenantId: TENANT_ID,
+        status: 'void',
+        items: [],
+      });
+      await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it.each(['issued', 'partially_paid', 'paid'] as const)(
+      'resolves when invoice status is %s (visible to tenant)',
+      async (status) => {
+        const row = { id: INVOICE_ID, tenantId: TENANT_ID, status, items: [] };
+        mockInvoiceFindFirst.mockResolvedValueOnce(row);
+        await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).resolves.toBe(row);
+      },
+    );
+  });
+
+  describe('listForTenant — LIFF /me/invoices scope', () => {
+    it('pins tenantId from caller AND excludes draft + void by default', async () => {
+      mockInvoiceFindMany.mockResolvedValueOnce([]);
+      await service.listForTenant({ limit: 20 }, TENANT_ID);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockInvoiceFindMany.mock.calls[0]![0];
+      expect(args.where).toEqual({
+        tenantId: TENANT_ID,
+        status: { notIn: ['draft', 'void'] },
+      });
+      expect(args.take).toBe(21);
+      expect(args.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
+      expect(args.include).toEqual({ items: { orderBy: { sortOrder: 'asc' } } });
+    });
+
+    it('narrows to a specific visible status when caller provides one', async () => {
+      mockInvoiceFindMany.mockResolvedValueOnce([]);
+      await service.listForTenant({ status: 'issued', limit: 20 }, TENANT_ID);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockInvoiceFindMany.mock.calls[0]![0];
+      expect(args.where).toEqual({ tenantId: TENANT_ID, status: 'issued' });
+    });
+
+    it.each(['draft', 'void'] as const)(
+      'returns an empty page when caller requests hidden status "%s" (no leak, no DB round-trip)',
+      async (hidden) => {
+        const result = await service.listForTenant({ status: hidden, limit: 20 }, TENANT_ID);
+
+        expect(result).toEqual({ items: [], nextCursor: null });
+        // Early-return guard — no DB hit on hidden-status probes.
+        expect(mockInvoiceFindMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it('honours period filter alongside default visibility exclusion', async () => {
+      mockInvoiceFindMany.mockResolvedValueOnce([]);
+      await service.listForTenant({ period: '2026-04', limit: 20 }, TENANT_ID);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockInvoiceFindMany.mock.calls[0]![0];
+      expect(args.where).toEqual({
+        tenantId: TENANT_ID,
+        status: { notIn: ['draft', 'void'] },
+        period: '2026-04',
+      });
+    });
+
+    it('combines filters with cursor keyset under AND', async () => {
+      mockInvoiceFindMany.mockResolvedValueOnce([]);
+      const cursor = Buffer.from(
+        JSON.stringify({ createdAt: '2026-04-15T00:00:00.000Z', id: INVOICE_ID }),
+        'utf8',
+      ).toString('base64url');
+
+      await service.listForTenant({ cursor, status: 'paid', limit: 10 }, TENANT_ID);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockInvoiceFindMany.mock.calls[0]![0];
+      expect(args.where).toEqual({
+        AND: [
+          { tenantId: TENANT_ID, status: 'paid' },
+          {
+            OR: [
+              { createdAt: { lt: new Date('2026-04-15T00:00:00.000Z') } },
+              { createdAt: new Date('2026-04-15T00:00:00.000Z'), id: { lt: INVOICE_ID } },
+            ],
+          },
+        ],
+      });
     });
   });
 
@@ -638,6 +748,46 @@ describe('InvoiceService', () => {
         { unitId: UNIT_ID, contractId: CONTRACT_ID, reason: 'duplicate_invoice' },
       ]);
       expect(mockInvoiceCreate).not.toHaveBeenCalled();
+
+      // The duplicate-existence pre-check MUST exclude voided invoices —
+      // voiding shouldn't burn the (contract, period) slot. Mirrors the
+      // partial unique index in the migration.
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const findManyArgs = mockInvoiceFindMany.mock.calls[0]![0];
+      expect(findManyArgs.where).toEqual({
+        contractId: { in: [CONTRACT_ID] },
+        period: '2026-04',
+        status: { not: 'void' },
+      });
+    });
+
+    it('does NOT skip duplicate_invoice when only voided invoices exist for (contractId, period)', async () => {
+      // After void, admin must be able to regenerate. The pre-check filters
+      // out voided rows, so `existingInvoices` is empty → contract proceeds
+      // to insert. A real DB will accept the insert because the partial
+      // unique index excludes void.
+      mockContractFindMany.mockResolvedValueOnce([
+        {
+          id: CONTRACT_ID,
+          unitId: UNIT_ID,
+          tenantId: TENANT_ID,
+          rentAmount: dec('4500.00'),
+          status: 'active',
+          unit: { unitNumber: '101' },
+        },
+      ]);
+      // Mock the post-filter result: API queried with `status: { not: 'void' }`
+      // → DB returned no rows because the only existing invoice was voided.
+      mockInvoiceFindMany.mockResolvedValueOnce([]);
+      mockMeterFindMany.mockResolvedValueOnce([]);
+      mockReadingFindMany.mockResolvedValueOnce([]);
+      mockInvoiceCreate.mockResolvedValueOnce({ id: INVOICE_ID });
+
+      const result = await service.createBatch(baseInput);
+
+      expect(result.generatedInvoiceIds).toEqual([INVOICE_ID]);
+      expect(result.skipped).toEqual([]);
+      expect(mockInvoiceCreate).toHaveBeenCalledTimes(1);
     });
 
     it('skips missing_water_reading when water meter exists but reading missing', async () => {
