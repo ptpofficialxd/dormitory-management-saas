@@ -37,6 +37,7 @@ import { type MockInstance, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockInvoiceFindMany = vi.fn();
 const mockInvoiceFindUnique = vi.fn();
+const mockInvoiceFindFirst = vi.fn();
 const mockInvoiceCreate = vi.fn();
 const mockInvoiceUpdate = vi.fn();
 const mockContractFindUnique = vi.fn();
@@ -51,6 +52,7 @@ vi.mock('@dorm/db', () => ({
     invoice: {
       findMany: mockInvoiceFindMany,
       findUnique: mockInvoiceFindUnique,
+      findFirst: mockInvoiceFindFirst,
       create: mockInvoiceCreate,
       update: mockInvoiceUpdate,
     },
@@ -103,6 +105,7 @@ describe('InvoiceService', () => {
   beforeEach(() => {
     mockInvoiceFindMany.mockReset();
     mockInvoiceFindUnique.mockReset();
+    mockInvoiceFindFirst.mockReset();
     mockInvoiceCreate.mockReset();
     mockInvoiceUpdate.mockReset();
     mockContractFindUnique.mockReset();
@@ -195,6 +198,36 @@ describe('InvoiceService', () => {
     it('throws NotFoundException on miss', async () => {
       mockInvoiceFindUnique.mockResolvedValueOnce(null);
       await expect(service.getById(INVOICE_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getByIdForTenant — LIFF /me/invoices/:id scope', () => {
+    it('queries with both id AND tenantId', async () => {
+      const row = { id: INVOICE_ID, tenantId: TENANT_ID, items: [] };
+      mockInvoiceFindFirst.mockResolvedValueOnce(row);
+
+      await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).resolves.toBe(row);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockInvoiceFindFirst.mock.calls[0]![0];
+      expect(args.where).toEqual({ id: INVOICE_ID, tenantId: TENANT_ID });
+      expect(args.include).toEqual({ items: { orderBy: { sortOrder: 'asc' } } });
+    });
+
+    it('throws NotFoundException when invoice belongs to a different tenant (not 403 — no leak)', async () => {
+      // Cross-tenant probe: same-company sibling asks for someone else's invoice id.
+      // The (id, tenantId) WHERE clause filters it out → findFirst returns null → 404.
+      mockInvoiceFindFirst.mockResolvedValueOnce(null);
+      await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('throws NotFoundException when invoice id does not exist at all', async () => {
+      mockInvoiceFindFirst.mockResolvedValueOnce(null);
+      await expect(service.getByIdForTenant(INVOICE_ID, TENANT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 

@@ -103,6 +103,22 @@ export class InvoiceService {
     return row as unknown as Invoice;
   }
 
+  /**
+   * Tenant-scoped variant for the LIFF `/me/invoices/:id` route. Same shape
+   * as {@link getById} but the query filters BOTH on `id` AND `tenantId` so
+   * tenant A asking for tenant B's invoice id receives a 404 (NEVER 403 —
+   * we do not leak existence). RLS already enforces companyId; the explicit
+   * `tenantId` filter handles same-company cross-tenant probes.
+   */
+  async getByIdForTenant(id: string, tenantId: string): Promise<Invoice> {
+    const row = await prisma.invoice.findFirst({
+      where: { id, tenantId },
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    });
+    if (!row) throw new NotFoundException(`Invoice ${id} not found`);
+    return row as unknown as Invoice;
+  }
+
   // ---------------------------------------------------------------
   // Write paths — single invoice
   // ---------------------------------------------------------------
