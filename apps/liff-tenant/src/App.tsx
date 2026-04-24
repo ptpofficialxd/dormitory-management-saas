@@ -1,18 +1,22 @@
 import { Route, Routes } from 'react-router-dom';
 import { BindPage } from './pages/BindPage.js';
+import { InvoicesPage } from './pages/InvoicesPage.js';
 
 /**
  * Routes for the LIFF tenant app.
  *
  *   /c/:companySlug/bind?code=XXXX-XXXX  → BindPage (peek → confirm → redeem)
+ *   /c/:companySlug/invoices             → InvoicesPage (tenant home / bills)
  *
  * Anything else redirects to a generic "not found" — LIFF deep links should
- * always include both the slug and the code.
+ * always include the slug; specific surface (bind / invoices / pay) is per
+ * route.
  */
 export function App() {
   return (
     <Routes>
       <Route path="/c/:companySlug/bind" element={<BindPage />} />
+      <Route path="/c/:companySlug/invoices" element={<InvoicesPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
