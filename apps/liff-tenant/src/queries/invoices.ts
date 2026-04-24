@@ -87,3 +87,26 @@ export function useInvoices(opts: { token: string }) {
     },
   });
 }
+
+/**
+ * useInvoiceDetail — `GET /me/invoices/:id` with the tenant Bearer token.
+ *
+ * Returns the full invoice including line items. Server returns 404 if the
+ * id doesn't belong to the caller (cross-tenant probe protection); the hook
+ * surfaces it as a typed `ApiError.code === 'NotFoundException'` so the page
+ * can render a friendly "ไม่พบใบแจ้งหนี้".
+ */
+export function useInvoiceDetail(opts: { token: string; invoiceId: string }) {
+  return useQuery<InvoiceWire, ApiError>({
+    queryKey: ['me', 'invoices', 'detail', opts.invoiceId],
+    queryFn: () =>
+      apiGet(`/me/invoices/${opts.invoiceId}`, invoiceWireSchema, { token: opts.token }),
+    enabled: Boolean(opts.token) && Boolean(opts.invoiceId),
+    staleTime: 30_000,
+    retry: (failureCount, error) => {
+      if ((error as ApiError).statusCode === 401) return false;
+      if ((error as ApiError).statusCode === 404) return false;
+      return failureCount < 2;
+    },
+  });
+}
