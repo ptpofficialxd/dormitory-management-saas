@@ -97,6 +97,24 @@ async function bootstrap(): Promise<void> {
   await app.register(fastifyHelmet, { contentSecurityPolicy: false });
   await app.register(fastifyCookie);
 
+  // CORS — required for cross-origin LIFF/web-admin calls.
+  //
+  // Permissive for MVP — `origin: true` reflects the request's `Origin` header
+  // so localhost / Pinggy / ngrok tunnels all work without an env bake step.
+  // `Access-Control-Allow-Credentials: true` lets LIFF send `Authorization`
+  // (Bearer tenant JWT) and lets web-admin forward cookies.
+  //
+  // Phase-2 hardening: add APP_URL / LIFF_URL to env schema and lock origin
+  // to that allow-list in production (a trusted tenant could otherwise call
+  // the API from a phishing page).
+  app.enableCors({
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['content-type', 'authorization', 'idempotency-key', 'accept'],
+    maxAge: 86_400, // cache preflight 1 day
+  });
+
   app.enableShutdownHooks();
 
   // Listen on 0.0.0.0 so it's reachable from Docker's host-mapped port.
