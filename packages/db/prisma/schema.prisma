@@ -474,8 +474,17 @@ model Invoice {
   items    InvoiceItem[]
   payments Payment[]
 
-  // Prevent accidental duplicate invoices for the same contract + month.
-  @@unique([contractId, period])
+  // Uniqueness on (contractId, period) is enforced by a PARTIAL UNIQUE
+  // INDEX `WHERE status != 'void'` — defined in the migration SQL because
+  // Prisma 6 still doesn't support partial indexes in the schema DSL.
+  // Why partial: voiding an invoice (admin mistake / contract change)
+  // shouldn't burn the (contract, period) slot — admin must be able to
+  // regenerate. Without the partial filter, the void row blocks reuse
+  // forever and the only escape is hand-deletion (which destroys the
+  // audit trail).
+  // The regular composite index below covers general lookups; the
+  // partial unique index sits alongside for constraint enforcement.
+  @@index([contractId, period])
   @@index([companyId])
   @@index([tenantId, status])
   @@index([status, dueDate])
