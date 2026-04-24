@@ -51,6 +51,20 @@ import { PromptPayService } from './prompt-pay.service.js';
  *   - `contractId` on single-invoice POST → must be visible (RLS-per-table)
  *   - Batch sources contracts via RLS-scoped findMany so nothing leaks
  */
+/**
+ * Statuses that should NEVER surface to a LIFF tenant. `draft` is admin
+ * pre-commit work-in-progress (the invoice may be edited or cancelled
+ * before it's a real bill); `void` is a cancelled bill that no longer
+ * obligates the tenant. Hiding both prevents:
+ *   - confusing UX (a bill the tenant can see but can't pay)
+ *   - PDPA-flavoured leak (tenant probing for unissued amounts)
+ *   - accidental payment against a bill whose figure later changes
+ *
+ * Mirrored by the `getByIdForTenant` 404 guard so URL-guessing a draft
+ * id can't leak existence either.
+ */
+const TENANT_HIDDEN_INVOICE_STATUSES = ['draft', 'void'] as const;
+
 @Injectable()
 export class InvoiceService {
   constructor(private readonly promptPay: PromptPayService) {}
@@ -94,6 +108,63 @@ export class InvoiceService {
     return buildCursorPage(rows as unknown as Invoice[], limit);
   }
 
+  /**
+   * Tenant-scoped list for the LIFF `/me/invoices` route.
+   *
+   * Defence in depth atop {@link list}:
+   *   1. `tenantId` is sourced from JWT (caller-supplied query value is
+   *      already overridden in the controller, but we re-pin it here so a
+   *      future caller calling the service directly can't cheat).
+   *   2. `status NOT IN ('draft', 'void')` — drafts are admin-only
+   *      pre-commit state, voided invoices no longer obligate the tenant;
+   *      neither should ever be returned to a tenant. If the caller
+   *      explicitly filters by a hidden status we return an empty page
+   *      (rather than 400) so client probes don't reveal which statuses
+   *      are admin-only.
+   */
+  async listForTenant(query: ListInvoicesQuery, tenantId: string): Promise<CursorPage<Invoice>> {
+    const { cursor, limit, status, period } = query;
+
+    // Caller asked for a hidden status → empty page, no leak.
+    if (status && (TENANT_HIDDEN_INVOICE_STATUSES as readonly string[]).includes(status)) {
+      return { items: [], nextCursor: null };
+    }
+
+    const decoded = cursor ? decodeCursor(cursor) : null;
+
+    const baseWhere: Prisma.InvoiceWhereInput = {
+      tenantId,
+      // If the caller specified a (visible) status, narrow to that. Otherwise
+      // exclude every hidden status so the default list is "what tenants can
+      // legitimately see".
+      status: status ?? { notIn: [...TENANT_HIDDEN_INVOICE_STATUSES] },
+    };
+    if (period) baseWhere.period = period;
+
+    const where: Prisma.InvoiceWhereInput = decoded
+      ? {
+          AND: [
+            baseWhere,
+            {
+              OR: [
+                { createdAt: { lt: new Date(decoded.createdAt) } },
+                { createdAt: new Date(decoded.createdAt), id: { lt: decoded.id } },
+              ],
+            },
+          ],
+        }
+      : baseWhere;
+
+    const rows = await prisma.invoice.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit + 1,
+      include: { items: { orderBy: { sortOrder: 'asc' } } },
+    });
+
+    return buildCursorPage(rows as unknown as Invoice[], limit);
+  }
+
   async getById(id: string): Promise<Invoice> {
     const row = await prisma.invoice.findUnique({
       where: { id },
@@ -115,7 +186,13 @@ export class InvoiceService {
       where: { id, tenantId },
       include: { items: { orderBy: { sortOrder: 'asc' } } },
     });
-    if (!row) throw new NotFoundException(`Invoice ${id} not found`);
+    // Mirror `listForTenant` visibility rules: a tenant guessing / holding a
+    // stale URL of a draft or voided invoice gets the same 404 as if the row
+    // didn't exist. NEVER throw 403 — we do not leak existence of invisible
+    // rows (same reason we never leak cross-tenant 403s).
+    if (!row || (TENANT_HIDDEN_INVOICE_STATUSES as readonly string[]).includes(row.status)) {
+      throw new NotFoundException(`Invoice ${id} not found`);
+    }
     return row as unknown as Invoice;
   }
 
@@ -263,7 +340,12 @@ export class InvoiceService {
 
     const promptPayRef = this.promptPay.buildPayload({
       promptPayId: company.promptPayId,
-      amount: existing.total,
+      // `.toString()` per money.ts boundary convention: Prisma.Decimal
+      // (decimal.js-light) is NOT instanceof decimal.js's Decimal in
+      // shared, so passing the raw object throws
+      // "money(): unsupported input type: object". Stringify across the
+      // package boundary — both Decimal flavours emit the same wire format.
+      amount: existing.total.toString(),
     });
 
     const row = await prisma.invoice.update({
@@ -362,9 +444,16 @@ export class InvoiceService {
 
     // Pull existing invoices in one shot — `(contractId, period)` lookup,
     // so a Map is faster than per-contract roundtrips.
+    //
+    // `status: { not: 'void' }` mirrors the partial unique index on the DB
+    // (see `20260424151926_partial_unique_invoice_excluding_void`). Voided
+    // invoices no longer occupy the (contract, period) slot, so they
+    // SHOULDN'T cause us to skip with `duplicate_invoice` here. Without
+    // this filter we'd over-skip and admin could never regenerate after a
+    // void without hand-deleting rows.
     const contractIds = contracts.map((c) => c.id);
     const existingInvoices = await prisma.invoice.findMany({
-      where: { contractId: { in: contractIds }, period },
+      where: { contractId: { in: contractIds }, period, status: { not: 'void' } },
       select: { contractId: true },
     });
     const existingSet = new Set(existingInvoices.map((i) => i.contractId));

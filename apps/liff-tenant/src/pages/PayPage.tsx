@@ -195,9 +195,14 @@ function PayForm({
             id="slip-file"
             type="file"
             accept={ACCEPTED_MIME_TYPES.join(',')}
-            // `capture` opens the camera as a first-choice picker on mobile
-            // — user can still switch to gallery / files via the picker UI.
-            capture="environment"
+            // NOTE: do NOT set `capture` — iOS Safari interprets it as
+            // "camera-only" and skips the Photo Library / Files options
+            // entirely. Without `capture`, iOS shows the full picker
+            // (Take Photo · Photo Library · Choose Files) which matches
+            // the user's expected behaviour for slip upload (most users
+            // already have the slip saved as an image, not freshly
+            // captured). Re-add `capture="environment"` only if a future
+            // requirement is "force fresh photo".
             disabled={isPending}
             onChange={onPickFile}
             className="block w-full text-sm file:mr-3 file:rounded-md file:border-0 file:bg-line-green file:px-3 file:py-2 file:text-sm file:font-medium file:text-white"

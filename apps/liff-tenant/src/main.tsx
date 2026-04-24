@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App.js';
 import './index.css';
+import { initLiff } from './lib/liff.js';
 
 /**
  * Single QueryClient for the whole app. Defaults tuned for LIFF:
@@ -32,12 +33,43 @@ if (!rootEl) {
   throw new Error('Missing #root mount node');
 }
 
-createRoot(rootEl).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
-    </QueryClientProvider>
-  </StrictMode>,
-);
+// Build the React root NOW (synchronously, while `rootEl` is type-narrowed
+// to `HTMLElement`). TS doesn't carry control-flow narrowing into nested
+// function closures — referencing `rootEl` inside `mount()` would widen back
+// to `HTMLElement | null`. Capturing the `Root` here keeps the closure clean.
+const root = createRoot(rootEl);
+
+function mount(): void {
+  root.render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </StrictMode>,
+  );
+}
+
+/**
+ * Wait for `liff.init()` BEFORE mounting React.
+ *
+ * Why: LIFF SDK encodes the original sub-URL into `?liff.state=...` when LINE
+ * redirects from `liff.line.me/<id>/c/.../bind?code=XXX` to our endpoint.
+ * `liff.init()` then restores the URL to `/c/.../bind?code=XXX` via
+ * `history.replaceState`. React Router does NOT listen for replaceState — so
+ * if React mounts BEFORE init resolves, BrowserRouter sees pathname `/`,
+ * matches `*`, and shows the NotFound screen forever.
+ *
+ * Init failures are non-fatal here — `useLiff` will surface the error UI
+ * downstream (e.g. "Open in LINE app to continue").
+ *
+ * Safety net: if init hangs (network, blocked SDK CDN), mount after 4 s
+ * anyway so the user sees SOMETHING instead of a permanent blank page.
+ */
+const INIT_TIMEOUT_MS = 4000;
+const initOrTimeout = Promise.race([
+  initLiff().catch(() => undefined),
+  new Promise((resolve) => setTimeout(resolve, INIT_TIMEOUT_MS)),
+]);
+initOrTimeout.then(mount);

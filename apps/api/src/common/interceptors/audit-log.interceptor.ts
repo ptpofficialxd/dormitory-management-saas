@@ -1,5 +1,5 @@
-import { prisma } from '@dorm/db';
-import type { AdminJwtClaims } from '@dorm/shared/zod';
+import { Prisma, prisma } from '@dorm/db';
+import type { AdminJwtClaims, TenantJwtClaims } from '@dorm/shared/zod';
 import {
   type CallHandler,
   type ExecutionContext,
@@ -9,6 +9,18 @@ import {
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { type Observable, mergeMap } from 'rxjs';
+
+/**
+ * `req.user` is set by either JwtGuard (admin) or TenantJwtGuard (LIFF
+ * tenant) — they share the same property name but the claim shapes diverge:
+ *   - admin:  `{ sub: user.id, companyId, roles, typ: 'access', ... }`
+ *   - tenant: `{ sub: tenant.id, companyId, lineUserId, typ: 'liff', ... }`
+ * Use the `typ` discriminator to fan out — DON'T blindly write
+ * `actorUserId: req.user.sub` for tenant requests, the FK to `user.id`
+ * will explode and (because of ALS+Proxy tx, ADR-0001) take the whole
+ * request tx down with it.
+ */
+type AnyClaims = AdminJwtClaims | TenantJwtClaims;
 
 /**
  * Writes an `audit_log` row for every mutating request (POST/PUT/PATCH/DELETE)
@@ -44,9 +56,7 @@ export class AuditLogInterceptor implements NestInterceptor {
   private readonly logger = new Logger(AuditLogInterceptor.name);
 
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const req = ctx
-      .switchToHttp()
-      .getRequest<FastifyRequest & { user?: AdminJwtClaims; id?: string }>();
+    const req = ctx.switchToHttp().getRequest<FastifyRequest & { user?: AnyClaims; id?: string }>();
     if (!MUTATING_METHODS.has(req.method)) return next.handle();
 
     const user = req.user;
@@ -61,17 +71,34 @@ export class AuditLogInterceptor implements NestInterceptor {
       null;
     const userAgent = (req.headers['user-agent'] as string | undefined) ?? null;
 
+    // Discriminate admin vs tenant claim. Admin's `sub` IS a `user.id`
+    // (FK target). Tenant's `sub` is a `tenant.id` — passing it as
+    // `actorUserId` would violate `audit_log_actor_user_id_fkey` and,
+    // crucially, abort the surrounding ALS-shared tx (ADR-0001). For
+    // tenant actions we leave `actorUserId` null and stash the tenant
+    // identity in `metadata` so PDPA / forensics can still trace.
+    const isTenant = user.typ === 'liff';
+    const actorUserId = isTenant ? null : user.sub;
+    // `Prisma.InputJsonObject` (not `Record<string, unknown>`) — Prisma's
+    // generated `Json` field type rejects looser shapes because `unknown`
+    // could hide non-serialisable values (functions, symbols). The plain
+    // `{}` literal previously inferred narrowly enough to slip through;
+    // with our two-branch object literal we have to type it explicitly.
+    const metadata: Prisma.InputJsonObject = isTenant
+      ? { actorTenantId: user.sub, actorLineUserId: user.lineUserId }
+      : {};
+
     return next.handle().pipe(
       mergeMap(async (value) => {
         try {
           await prisma.auditLog.create({
             data: {
               companyId: user.companyId,
-              actorUserId: user.sub,
+              actorUserId,
               action: `${req.method} ${req.routeOptions?.url ?? req.url}`,
               resource: deriveResource(req.url),
               resourceId: null,
-              metadata: {},
+              metadata,
               ipAddress: ip,
               userAgent,
             },

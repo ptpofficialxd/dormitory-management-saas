@@ -26,7 +26,33 @@ import { CURRENCY_THB, LOCALE_TH, MONEY_SCALE } from './constants.js';
 
 /** Strongly-named alias — keeps call-site intent clear. */
 export type Money = Decimal;
-export type MoneyInput = Decimal | string | number;
+export type MoneyInput = Decimal | string | number | DecimalLike;
+
+/**
+ * Structural interface matching `Prisma.Decimal` (decimal.js-light) without
+ * importing `@prisma/client` into shared (would pull Prisma into the LIFF
+ * browser bundle — see file header). decimal.js and decimal.js-light both
+ * carry the same `s` (sign) / `e` (exponent) / `d` (digit array) shape and
+ * both emit the same string format via `toString()`, so we can detect+convert
+ * across the boundary safely.
+ */
+export type DecimalLike = {
+  s: number;
+  e: number;
+  d: number[];
+  toString(): string;
+};
+
+function isDecimalLike(input: unknown): input is DecimalLike {
+  return (
+    typeof input === 'object' &&
+    input !== null &&
+    'd' in input &&
+    's' in input &&
+    'e' in input &&
+    typeof (input as { toString: unknown }).toString === 'function'
+  );
+}
 
 // Configure decimal.js globally for the package. Matches Prisma's runtime
 // (precision=20, ROUND_HALF_UP) so values round-trip without surprises.
@@ -57,6 +83,13 @@ export function money(input: MoneyInput): Money {
     }
     // Force through string conversion — avoids picking up JS float noise
     // (e.g. `0.1 + 0.2` → `0.30000000000000004`).
+    return new Decimal(input.toString());
+  }
+  // Cross-package interop: callers may pass `Prisma.Decimal` (decimal.js-light)
+  // through the boundary without an explicit `.toString()`. Detect via shape +
+  // round-trip through the string wire format. Both Decimal flavours produce
+  // the same canonical string, so this is lossless.
+  if (isDecimalLike(input)) {
     return new Decimal(input.toString());
   }
   throw new Error(`money(): unsupported input type: ${typeof input}`);
