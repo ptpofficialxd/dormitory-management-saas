@@ -7,6 +7,7 @@ import {
 import { useMutation } from '@tanstack/react-query';
 import { z } from 'zod';
 import { type ApiError, apiPost } from '../lib/api.js';
+import { writeTenantToken } from '../lib/tenant-token.js';
 
 /**
  * WIRE schemas — over-the-wire JSON has Date as ISO string, so we re-derive
@@ -27,10 +28,20 @@ const tenantInvitePreviewWireSchema = z.object({
 });
 export type TenantInvitePreview = z.infer<typeof tenantInvitePreviewWireSchema>;
 
+const tenantAuthTokenWireSchema = z.object({
+  accessToken: z.string().min(16),
+  accessTokenExpiresAt: z.number().int(),
+});
+
 const redeemTenantInviteWireResponseSchema = z.object({
   tenantId: z.string().uuid(),
   companyId: z.string().uuid(),
+  companySlug: z.string().min(1),
   redeemedAt: z.coerce.date(),
+  // Optional — server bakes a fresh tenant JWT into the response on first
+  // bind for a one-step redirect into /me/* routes (Task #75 UX optim).
+  // Absence is non-fatal; useTenantSession exchanges via /me/auth/exchange.
+  token: tenantAuthTokenWireSchema.optional(),
 });
 export type RedeemTenantInviteResponse = z.infer<typeof redeemTenantInviteWireResponseSchema>;
 
@@ -66,7 +77,11 @@ export function usePeekInvite() {
  * useRedeemInvite — POST /liff/invites/redeem
  *
  * Server verifies `lineIdToken` against LINE's verify endpoint, atomically
- * CAS-flips the invite to redeemed, and binds the tenant to `lineUserId`.
+ * CAS-flips the invite to redeemed, binds the tenant to `lineUserId`, and
+ * (per Task #75) bakes a fresh tenant JWT into the response. We persist
+ * that token to sessionStorage on success so the very next /me/* render
+ * already has Bearer auth — no /me/auth/exchange round-trip needed for
+ * first-time bind.
  *
  * Possible terminal errors (mapped to ApiError.code):
  *   - INVALID_LINE_ID_TOKEN  → idToken bad/expired/aud-mismatch (401)
@@ -84,6 +99,15 @@ export function useRedeemInvite() {
     mutationFn: async (input) => {
       const parsed = redeemTenantInviteInputSchema.parse(input);
       return apiPost('/liff/invites/redeem', parsed, redeemTenantInviteWireResponseSchema);
+    },
+    onSuccess: (data) => {
+      // First-time-bind UX optim — server-baked token may be absent on
+      // older deploys or test fixtures. Falling through is fine: the next
+      // /me/* render goes through useTenantSession which exchanges via
+      // /me/auth/exchange.
+      if (data.token) {
+        writeTenantToken(data.token);
+      }
     },
   });
 }

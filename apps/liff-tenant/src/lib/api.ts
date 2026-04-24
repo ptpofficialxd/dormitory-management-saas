@@ -1,16 +1,24 @@
 import { z } from 'zod';
 import { env } from '../env.js';
+import { clearTenantToken } from './tenant-token.js';
 
 /**
  * API client for the LIFF tenant app. Thin wrapper around `fetch` that:
  *
  * 1. Joins the path against `VITE_API_BASE_URL`.
  * 2. Always sends/receives JSON.
- * 3. Parses the GlobalExceptionFilter envelope on non-2xx and throws a
+ * 3. Optionally injects `Authorization: Bearer <token>` for /me/* routes.
+ * 4. Optionally injects `Idempotency-Key` for mutations that require it
+ *    (POST /me/payments per CLAUDE.md §3 #10).
+ * 5. Parses the GlobalExceptionFilter envelope on non-2xx and throws a
  *    typed `ApiError` with the server's `error` code + `message`.
- * 4. Validates the success body against a Zod schema (caller-supplied) so
+ * 6. Validates the success body against a Zod schema (caller-supplied) so
  *    a bad server response surfaces as a parse error, not a runtime crash
  *    inside a component.
+ *
+ * 401 handling: any `UnauthorizedException` from a `/me/*` route clears
+ * the stored tenant token. The hook layer (useTenantSession) detects the
+ * absence on next render and triggers a fresh /me/auth/exchange.
  *
  * Error contract from the backend (see apps/api GlobalExceptionFilter):
  *
@@ -34,8 +42,11 @@ export type ApiErrorCode =
   | 'NotFoundException'
   | 'ConflictException'
   | 'GoneException'
+  | 'BadRequestException'
   | 'UnauthorizedException'
   | 'InternalServerError'
+  | 'IdempotencyKeyRequired'
+  | 'InvalidInvoiceId'
   | 'NetworkError'
   | 'ResponseShapeMismatch'
   | 'Unknown';
@@ -59,38 +70,43 @@ const errorEnvelopeSchema = z.object({
   path: z.string().optional(),
 });
 
-/**
- * POST a JSON body to `path` and return the parsed response.
- *
- * @param path  Path joined against `VITE_API_BASE_URL` — must start with `/`.
- * @param body  Plain object; serialised to JSON.
- * @param schema Zod schema for the success body (use the client-side wire
- *               variants from `queries/tenant-invite.ts` — they `coerce.date()`
- *               since dates arrive as ISO strings over the wire).
- */
-export async function apiPost<T>(path: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
+export interface ApiOpts {
+  /** Bearer token for /me/* routes. Pulled from sessionStorage by callers. */
+  token?: string;
+  /** DB-enforced unique per CLAUDE.md §3 #10 (POST /me/payments). */
+  idempotencyKey?: string;
+}
+
+async function request<T>(
+  method: 'GET' | 'POST',
+  path: string,
+  body: unknown,
+  schema: z.ZodType<T>,
+  opts: ApiOpts = {},
+): Promise<T> {
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+  if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
+
   let response: Response;
   try {
     response = await fetch(`${env.VITE_API_BASE_URL}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify(body),
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'omit',
     });
   } catch (err) {
-    // Network failure (DNS / TCP / CORS preflight rejection).
     throw new ApiError(0, 'NetworkError', (err as Error).message ?? 'Network error');
   }
 
-  // Always read the body once — even on success — because some browsers
-  // hold the connection open if the body is left undrained.
   const rawText = await response.text();
   let parsed: unknown = null;
   if (rawText) {
     try {
       parsed = JSON.parse(rawText);
     } catch {
-      // Non-JSON response (probably a 502 HTML page from the proxy).
       throw new ApiError(
         response.status,
         'ResponseShapeMismatch',
@@ -101,6 +117,12 @@ export async function apiPost<T>(path: string, body: unknown, schema: z.ZodType<
   }
 
   if (!response.ok) {
+    // 401 on a token-bearing request → drop the stored token so the next
+    // useTenantSession render triggers a fresh exchange. We don't auto-
+    // retry here — that's the hook's job (it has the LIFF idToken).
+    if (response.status === 401 && opts.token) {
+      clearTenantToken();
+    }
     const envelope = errorEnvelopeSchema.safeParse(parsed);
     if (envelope.success) {
       const msg =
@@ -126,4 +148,33 @@ export async function apiPost<T>(path: string, body: unknown, schema: z.ZodType<
     );
   }
   return result.data;
+}
+
+/**
+ * GET `path` and parse the response. Use for /me/invoices, /me/payments, ...
+ *
+ * @param path  Path joined against `VITE_API_BASE_URL` — must start with `/`.
+ *              Append your own query string for filters/cursor.
+ * @param schema Wire-side Zod schema (use z.coerce.date() for ISO strings).
+ * @param opts  `token` for Bearer auth; query strings live in `path`.
+ */
+export function apiGet<T>(path: string, schema: z.ZodType<T>, opts?: ApiOpts): Promise<T> {
+  return request('GET', path, undefined, schema, opts);
+}
+
+/**
+ * POST a JSON body to `path` and return the parsed response.
+ *
+ * @param path  Path joined against `VITE_API_BASE_URL` — must start with `/`.
+ * @param body  Plain object; serialised to JSON.
+ * @param schema Wire-side Zod schema.
+ * @param opts  `token` for Bearer auth; `idempotencyKey` for POST /me/payments.
+ */
+export function apiPost<T>(
+  path: string,
+  body: unknown,
+  schema: z.ZodType<T>,
+  opts?: ApiOpts,
+): Promise<T> {
+  return request('POST', path, body, schema, opts);
 }
