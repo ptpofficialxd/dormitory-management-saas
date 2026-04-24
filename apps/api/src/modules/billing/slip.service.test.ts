@@ -37,6 +37,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const mockSlipFindUnique = vi.fn();
+const mockSlipFindFirst = vi.fn();
 const mockSlipCreate = vi.fn();
 const mockPaymentFindUnique = vi.fn();
 const mockGetTenantContext = vi.fn();
@@ -45,6 +46,7 @@ vi.mock('@dorm/db', () => ({
   prisma: {
     slip: {
       findUnique: mockSlipFindUnique,
+      findFirst: mockSlipFindFirst,
       create: mockSlipCreate,
     },
     payment: {
@@ -82,6 +84,7 @@ describe('SlipService', () => {
 
   beforeEach(() => {
     mockSlipFindUnique.mockReset();
+    mockSlipFindFirst.mockReset();
     mockSlipCreate.mockReset();
     mockPaymentFindUnique.mockReset();
     mockGetTenantContext.mockReset();
@@ -435,6 +438,32 @@ describe('SlipService', () => {
     it('throws NotFound on miss', async () => {
       mockSlipFindUnique.mockResolvedValueOnce(null);
       await expect(service.getByPaymentId(PAYMENT_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getViewUrlForTenant — LIFF /me/slips/:id/view-url scope', () => {
+    const TENANT_ID = '44444444-4444-4444-8444-444444444444';
+
+    it('joins slip → payment.tenantId to enforce ownership', async () => {
+      mockSlipFindFirst.mockResolvedValueOnce({ id: SLIP_ID, r2ObjectKey: VALID_KEY });
+      mockGenerateDownloadUrl.mockResolvedValueOnce({ url: SIGNED_URL, expiresAt: EXPIRES_AT });
+
+      const result = await service.getViewUrlForTenant(SLIP_ID, TENANT_ID);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockSlipFindFirst.mock.calls[0]![0];
+      expect(args.where).toEqual({ id: SLIP_ID, payment: { tenantId: TENANT_ID } });
+      expect(result.url).toBe(SIGNED_URL);
+      expect(result.expiresAt).toBe(EXPIRES_AT.toISOString());
+    });
+
+    it('throws 404 (not 403) when slip belongs to a sibling tenant', async () => {
+      mockSlipFindFirst.mockResolvedValueOnce(null);
+      await expect(service.getViewUrlForTenant(SLIP_ID, TENANT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+      // No URL minted for an inaccessible slip.
+      expect(mockGenerateDownloadUrl).not.toHaveBeenCalled();
     });
   });
 });

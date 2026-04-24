@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { InvoiceController } from './invoice.controller.js';
 import { InvoiceService } from './invoice.service.js';
 import { MeInvoiceController } from './me-invoice.controller.js';
+import { MePaymentController } from './me-payment.controller.js';
+import { MeSlipController } from './me-slip.controller.js';
 import { PaymentController } from './payment.controller.js';
 import { PaymentService } from './payment.service.js';
 import { PromptPayService } from './prompt-pay.service.js';
@@ -24,7 +26,14 @@ import { SlipService } from './slip.service.js';
  * import BillingModule.
  */
 @Module({
-  controllers: [InvoiceController, MeInvoiceController, PaymentController, SlipController],
+  controllers: [
+    InvoiceController,
+    MeInvoiceController,
+    PaymentController,
+    MePaymentController,
+    SlipController,
+    MeSlipController,
+  ],
   providers: [PromptPayService, InvoiceService, PaymentService, SlipService],
   exports: [PromptPayService, InvoiceService, PaymentService, SlipService],
 })

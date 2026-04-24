@@ -255,6 +255,31 @@ export class SlipService {
     };
   }
 
+  /**
+   * Tenant-scoped variant for the LIFF `/me/slips/:id/view-url` route.
+   * Joins through the Payment row to enforce ownership: a slip is "owned"
+   * by tenant T iff the payment it's attached to has `tenantId = T`.
+   *
+   * 404 (NEVER 403) on cross-tenant probes — same posture as the other
+   * `*ForTenant` helpers. RLS already filters by companyId; this filter
+   * handles same-company cross-tenant access.
+   */
+  async getViewUrlForTenant(slipId: string, tenantId: string): Promise<SlipViewUrlResponse> {
+    const slip = await prisma.slip.findFirst({
+      where: { id: slipId, payment: { tenantId } },
+      select: { id: true, r2ObjectKey: true },
+    });
+    if (!slip) {
+      throw new NotFoundException(`Slip ${slipId} not found`);
+    }
+
+    const signed = await this.storage.generateDownloadUrl({ key: slip.r2ObjectKey });
+    return {
+      url: signed.url,
+      expiresAt: signed.expiresAt.toISOString(),
+    };
+  }
+
   // ---------------------------------------------------------------
   // Read paths
   // ---------------------------------------------------------------

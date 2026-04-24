@@ -91,6 +91,54 @@ export class PaymentService {
     return row as unknown as Payment;
   }
 
+  /**
+   * Tenant-scoped variant for the LIFF `/me/payments/:id` route. Returns
+   * 404 (NEVER 403) on cross-tenant probes — same posture as
+   * `InvoiceService.getByIdForTenant`.
+   *
+   * Also reused by slip endpoints as a one-line ownership guard:
+   *   await paymentService.getByIdForTenant(paymentId, tenant.sub);
+   *   // safe to proceed — payment exists AND belongs to caller
+   */
+  async getByIdForTenant(id: string, tenantId: string): Promise<Payment> {
+    const row = await prisma.payment.findFirst({ where: { id, tenantId } });
+    if (!row) throw new NotFoundException(`Payment ${id} not found`);
+    return row as unknown as Payment;
+  }
+
+  /**
+   * Tenant-initiated payment creation (LIFF). Pre-checks that the target
+   * invoice belongs to the caller — without this, a tenant could POST
+   * `{ invoiceId: <other-tenant-in-same-company> }` and create a Payment
+   * row attributed to the wrong tenant (the underlying `create` derives
+   * `tenantId` from the invoice, not the caller, so the row WOULD be
+   * mis-attributed).
+   *
+   * On match → delegates to `create()` which handles idempotency, status
+   * gates, etc. Tenant origin is logged via the standard AuditLog
+   * interceptor (no extra plumbing here).
+   */
+  async createForTenant(
+    input: CreatePaymentInput,
+    idempotencyKey: string,
+    tenantId: string,
+  ): Promise<Payment> {
+    const invoice = await prisma.invoice.findFirst({
+      where: { id: input.invoiceId, tenantId },
+      select: { id: true },
+    });
+    if (!invoice) {
+      // Match the "InvalidInvoiceId" wire shape that admin create() throws,
+      // not a 404 — keeps the LIFF error UX consistent (one error code per
+      // "you can't pay this").
+      throw new BadRequestException({
+        error: 'InvalidInvoiceId',
+        message: `Invoice ${input.invoiceId} does not exist or is not accessible`,
+      });
+    }
+    return this.create(input, idempotencyKey);
+  }
+
   // ---------------------------------------------------------------
   // Write paths
   // ---------------------------------------------------------------

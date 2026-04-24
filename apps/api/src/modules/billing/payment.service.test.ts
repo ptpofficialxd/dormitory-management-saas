@@ -46,6 +46,7 @@ const mockPaymentFindFirst = vi.fn();
 const mockPaymentCreate = vi.fn();
 const mockPaymentUpdate = vi.fn();
 const mockInvoiceFindUnique = vi.fn();
+const mockInvoiceFindFirst = vi.fn();
 const mockInvoiceUpdate = vi.fn();
 const mockExecuteRawUnsafe = vi.fn();
 const mockGetTenantContext = vi.fn();
@@ -61,6 +62,7 @@ vi.mock('@dorm/db', () => ({
     },
     invoice: {
       findUnique: mockInvoiceFindUnique,
+      findFirst: mockInvoiceFindFirst,
       update: mockInvoiceUpdate,
     },
     $executeRawUnsafe: mockExecuteRawUnsafe,
@@ -92,6 +94,7 @@ describe('PaymentService', () => {
     mockPaymentCreate.mockReset();
     mockPaymentUpdate.mockReset();
     mockInvoiceFindUnique.mockReset();
+    mockInvoiceFindFirst.mockReset();
     mockInvoiceUpdate.mockReset();
     mockExecuteRawUnsafe.mockReset();
     mockGetTenantContext.mockReset();
@@ -171,6 +174,47 @@ describe('PaymentService', () => {
     it('throws NotFoundException on miss', async () => {
       mockPaymentFindUnique.mockResolvedValueOnce(null);
       await expect(service.getById(PAYMENT_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('getByIdForTenant — LIFF /me/payments/:id scope + slip ownership guard', () => {
+    it('queries with both id AND tenantId', async () => {
+      const row = { id: PAYMENT_ID, tenantId: TENANT_ID, status: 'pending' };
+      mockPaymentFindFirst.mockResolvedValueOnce(row);
+
+      await expect(service.getByIdForTenant(PAYMENT_ID, TENANT_ID)).resolves.toBe(row);
+
+      // biome-ignore lint/style/noNonNullAssertion: call asserted by mockResolvedValueOnce
+      const args = mockPaymentFindFirst.mock.calls[0]![0];
+      expect(args.where).toEqual({ id: PAYMENT_ID, tenantId: TENANT_ID });
+    });
+
+    it('throws 404 (not 403) on cross-tenant probe', async () => {
+      mockPaymentFindFirst.mockResolvedValueOnce(null);
+      await expect(service.getByIdForTenant(PAYMENT_ID, TENANT_ID)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('createForTenant — invoice ownership pre-check', () => {
+    const baseInput = {
+      invoiceId: INVOICE_ID,
+      amount: '4800.00',
+      method: 'promptpay' as const,
+    };
+
+    it('rejects when invoice does not belong to caller', async () => {
+      // Same-company sibling probe: caller is tenant A, invoice belongs to
+      // tenant B in the same company. RLS lets the query through; the
+      // explicit tenantId filter rejects it -> findFirst returns null ->
+      // BadRequestException with InvalidInvoiceId.
+      mockInvoiceFindFirst.mockResolvedValueOnce(null);
+      await expect(service.createForTenant(baseInput, IDEMPOTENCY_KEY, TENANT_ID)).rejects.toThrow(
+        BadRequestException,
+      );
+      // Underlying create() must NOT have been called.
+      expect(mockPaymentCreate).not.toHaveBeenCalled();
     });
   });
 
