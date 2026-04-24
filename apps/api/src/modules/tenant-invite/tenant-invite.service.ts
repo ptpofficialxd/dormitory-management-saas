@@ -332,9 +332,15 @@ export class TenantInviteService {
     const codeHash = sha256Hex(code);
     const codePrefix = code.slice(0, TENANT_INVITE_CODE_PREFIX_LENGTH);
 
-    // Bypass-RLS lookup — no companyId yet.
+    // Bypass-RLS lookup — no companyId yet. Include the company slug so
+    // both the idempotent-replay path and the main path can return it (LIFF
+    // uses it to route to /c/:slug/* + the controller mints a tenant token
+    // bound to it).
     const candidate = await withTenant({ companyId: '', bypassRls: true }, () =>
-      prisma.tenantInvite.findFirst({ where: { codePrefix, codeHash } }),
+      prisma.tenantInvite.findFirst({
+        where: { codePrefix, codeHash },
+        include: { company: { select: { slug: true } } },
+      }),
     );
     if (!candidate) {
       throw new NotFoundException({
@@ -353,6 +359,7 @@ export class TenantInviteService {
       return {
         tenantId: candidate.tenantId,
         companyId: candidate.companyId,
+        companySlug: candidate.company.slug,
         redeemedAt: candidate.redeemedAt,
       };
     }
@@ -455,6 +462,7 @@ export class TenantInviteService {
       return {
         tenantId: candidate.tenantId,
         companyId: candidate.companyId,
+        companySlug: candidate.company.slug,
         redeemedAt: now,
       };
     });

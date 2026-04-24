@@ -83,3 +83,31 @@ export const tenantJwtClaimsSchema = z.object({
   exp: z.number().int(),
 });
 export type TenantJwtClaims = z.infer<typeof tenantJwtClaimsSchema>;
+
+/**
+ * Tenant access-token envelope returned to LIFF. No refresh token — when
+ * `accessTokenExpiresAt` passes, LIFF re-mints by exchanging a fresh
+ * `liff.getIDToken()` at `POST /me/auth/exchange`.
+ */
+export const tenantAuthTokenSchema = z.object({
+  accessToken: z.string().min(16),
+  /** UNIX epoch seconds. */
+  accessTokenExpiresAt: z.number().int(),
+});
+export type TenantAuthToken = z.infer<typeof tenantAuthTokenSchema>;
+
+/**
+ * Response body for `POST /me/auth/exchange` — LIFF receives both the JWT
+ * and the resolved tenant identity (`tenantId` + `companyId` are also encoded
+ * in the JWT, but surfacing them top-level lets the client route without
+ * decoding the token).
+ */
+export const loginLiffResponseSchema = z.object({
+  tenant: z.object({
+    id: uuidSchema,
+    companyId: companyIdSchema,
+    companySlug: slugSchema,
+  }),
+  token: tenantAuthTokenSchema,
+});
+export type LoginLiffResponse = z.infer<typeof loginLiffResponseSchema>;

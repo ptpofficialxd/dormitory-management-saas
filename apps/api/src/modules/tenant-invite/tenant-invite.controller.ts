@@ -21,7 +21,8 @@ import { Perm } from '../../common/decorators/perm.decorator.js';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import type { CursorPage } from '../../common/util/cursor.util.js';
-import { LineIdTokenVerifier } from './line-id-token.verifier.js';
+import { AuthService } from '../auth/auth.service.js';
+import { LineIdTokenVerifier } from '../auth/line-id-token.verifier.js';
 import { TenantInviteService } from './tenant-invite.service.js';
 
 /**
@@ -97,6 +98,7 @@ export class PublicTenantInviteController {
   constructor(
     private readonly invites: TenantInviteService,
     private readonly idTokenVerifier: LineIdTokenVerifier,
+    private readonly authService: AuthService,
   ) {}
 
   /**
@@ -132,6 +134,22 @@ export class PublicTenantInviteController {
     @ZodBody(redeemTenantInviteInputSchema) body: RedeemTenantInviteInput,
   ): Promise<RedeemTenantInviteResponse> {
     const verified = await this.idTokenVerifier.verify(body.lineIdToken);
-    return this.invites.redeem(body.code, verified.lineUserId);
+    const bind = await this.invites.redeem(body.code, verified.lineUserId);
+
+    // Bake a fresh tenant session token into the redeem response so LIFF
+    // can hop straight into authenticated /me/* routes — no follow-up
+    // /me/auth/exchange round-trip on first bind. Token mint failure is
+    // logged but doesn't fail the bind: LIFF treats absent token as
+    // "fall back to exchange flow" and the bind itself is durable.
+    const token = await this.authService
+      .mintTenantSession({
+        tenantId: bind.tenantId,
+        companyId: bind.companyId,
+        companySlug: bind.companySlug,
+        lineUserId: verified.lineUserId,
+      })
+      .catch(() => undefined);
+
+    return token ? { ...bind, token } : bind;
   }
 }

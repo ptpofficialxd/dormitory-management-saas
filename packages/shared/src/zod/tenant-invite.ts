@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { companyIdSchema, uuidSchema } from './primitives.js';
+import { tenantAuthTokenSchema } from './auth.js';
+import { companyIdSchema, slugSchema, uuidSchema } from './primitives.js';
 
 /**
  * TenantInvite (Task #41) — short-lived, single-use code that binds a LINE
@@ -182,13 +183,22 @@ export const redeemTenantInviteInputSchema = z.object({
 export type RedeemTenantInviteInput = z.infer<typeof redeemTenantInviteInputSchema>;
 
 /**
- * Redeem success response — minimal on purpose. The LIFF app already knows
- * the tenant's display info from `peek`; after redeem it just needs to know
- * the binding succeeded + the canonical `tenantId` for subsequent calls.
+ * Redeem success response. `companySlug` is included so LIFF can route to
+ * `/c/:companySlug/*` after bind without a separate lookup.
+ *
+ * Includes a freshly-minted tenant JWT as a first-time-bind UX optimisation —
+ * LIFF can hop straight into authenticated `/me/*` routes without a follow-up
+ * `POST /me/auth/exchange` round-trip.
+ *
+ * The token is OPTIONAL on the schema (service-level redeem returns the bind
+ * result; the controller bolts the token on top). LIFF treats absence as
+ * "fall back to exchange flow".
  */
 export const redeemTenantInviteResponseSchema = z.object({
   tenantId: uuidSchema,
   companyId: companyIdSchema,
+  companySlug: slugSchema,
   redeemedAt: z.date(),
+  token: tenantAuthTokenSchema.optional(),
 });
 export type RedeemTenantInviteResponse = z.infer<typeof redeemTenantInviteResponseSchema>;

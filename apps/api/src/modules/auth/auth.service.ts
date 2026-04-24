@@ -4,7 +4,10 @@ import type {
   AdminJwtClaims,
   AuthTokens,
   LoginAdminInput,
+  LoginLiffInput,
+  LoginLiffResponse,
   RefreshTokenInput,
+  TenantAuthToken,
 } from '@dorm/shared/zod';
 import {
   Injectable,
@@ -13,6 +16,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from './jwt.service.js';
+import { LineIdTokenVerifier } from './line-id-token.verifier.js';
 
 /**
  * Admin login / refresh / logout.
@@ -48,7 +52,10 @@ export class AuthService {
   private static readonly TIMING_SAFE_DUMMY_HASH =
     '$argon2id$v=19$m=19456,t=2,p=1$YW5vbnltb3VzLXNhbHQtZHVtbXk$RDWpHRjL42/yi/uRIk+DuIBnaHvK4G6SGEPo8sD5Ke0';
 
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly lineIdTokenVerifier: LineIdTokenVerifier,
+  ) {}
 
   /**
    * Perform a password login and return a fresh token pair.
@@ -163,6 +170,92 @@ export class AuthService {
    */
   async logout(_claims: AdminJwtClaims): Promise<void> {
     // Intentional no-op for MVP.
+  }
+
+  // -----------------------------------------------------------------------
+  // LIFF tenant auth
+  // -----------------------------------------------------------------------
+
+  /**
+   * Exchange a LIFF `liff.getIDToken()` for a tenant session JWT.
+   *
+   * Flow:
+   *   1. Resolve company by slug (RLS bypass, narrow query — same posture as
+   *      admin login).
+   *   2. Verify the idToken against LINE's verify endpoint → trusted lineUserId.
+   *   3. Lookup the bound Tenant by (companyId, lineUserId). 401 if no row —
+   *      LIFF should redirect the user to the bind flow.
+   *   4. Mint a tenant JWT (1h, audience='dorm-liff') and return alongside
+   *      the resolved tenant identity.
+   *
+   * Errors are deliberately uniform UnauthorizedException — distinguishing
+   * "no such tenant" from "bad idToken" would leak who is bound to which
+   * dorm. Front-end can recover by routing to /bind on any 401.
+   */
+  async exchangeLiffIdToken(input: LoginLiffInput): Promise<LoginLiffResponse> {
+    const company = await this.lookupCompanyBySlug(input.companySlug);
+    if (!company || company.status !== 'active') {
+      // Run idToken verify anyway so we don't leak company existence via timing.
+      // (LINE verify is the slow path; skipping it on 'company missing' would
+      // make that case detectable by latency.)
+      await this.lineIdTokenVerifier.verify(input.idToken).catch(() => undefined);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const verified = await this.lineIdTokenVerifier.verify(input.idToken);
+
+    const tenant = await withTenant({ companyId: company.id }, () =>
+      prisma.tenant.findUnique({
+        where: {
+          companyId_lineUserId: { companyId: company.id, lineUserId: verified.lineUserId },
+        },
+        select: { id: true, status: true },
+      }),
+    );
+
+    if (!tenant || tenant.status !== 'active') {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const token = await this.mintTenantSession({
+      tenantId: tenant.id,
+      companyId: company.id,
+      companySlug: company.slug,
+      lineUserId: verified.lineUserId,
+    });
+
+    return {
+      tenant: {
+        id: tenant.id,
+        companyId: company.id,
+        companySlug: company.slug,
+      },
+      token,
+    };
+  }
+
+  /**
+   * Mint a tenant session token. Exposed (not just used by exchange) so the
+   * TenantInvite redeem flow can hand back a token in its response — see
+   * `RedeemTenantInviteResponse.token`. Keeps the JWT-mint logic in one place.
+   */
+  async mintTenantSession(args: {
+    tenantId: string;
+    companyId: string;
+    companySlug: string;
+    lineUserId: string;
+  }): Promise<TenantAuthToken> {
+    try {
+      const { token, expiresAt } = await this.jwt.signTenantToken({
+        sub: args.tenantId,
+        companyId: args.companyId,
+        companySlug: args.companySlug,
+        lineUserId: args.lineUserId,
+      });
+      return { accessToken: token, accessTokenExpiresAt: expiresAt };
+    } catch (err) {
+      throw new ServiceUnavailableException(`Tenant token issue failed: ${(err as Error).message}`);
+    }
   }
 
   // -----------------------------------------------------------------------

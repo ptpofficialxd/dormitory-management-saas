@@ -64,6 +64,7 @@ vi.mock('@dorm/db', () => ({
 const { TenantInviteService } = await import('./tenant-invite.service.js');
 
 const COMPANY_ID = '22222222-2222-2222-8222-222222222222';
+const COMPANY_SLUG = 'dorm-alpha';
 const OTHER_COMPANY_ID = '33333333-3333-3333-8333-333333333333';
 const TENANT_ID = '55555555-5555-5555-8555-555555555555';
 const INVITE_ID = '77777777-7777-7777-8777-777777777777';
@@ -96,6 +97,10 @@ function makeInviteRow(overrides: Partial<Record<string, unknown>> = {}) {
     redeemedByLineUserId: null,
     createdAt: new Date('2026-04-22T00:00:00.000Z'),
     createdByUserId: ACTOR_USER_ID,
+    // Joined company.slug — the redeem path includes this relation so the
+    // returned RedeemTenantInviteResponse can carry companySlug for token
+    // mint downstream. Tests that override `status` etc. inherit this.
+    company: { slug: COMPANY_SLUG },
     ...overrides,
   };
 }
@@ -454,6 +459,7 @@ describe('TenantInviteService', () => {
       const out = await service.redeem(PLAINTEXT_CODE, LINE_USER_ID);
       expect(out.tenantId).toBe(TENANT_ID);
       expect(out.companyId).toBe(COMPANY_ID);
+      expect(out.companySlug).toBe(COMPANY_SLUG);
       expect(out.redeemedAt).toEqual(redeemedAt);
 
       // No mutation, no audit row, no withTenant for mutate side.
@@ -497,6 +503,7 @@ describe('TenantInviteService', () => {
       const out = await service.redeem(PLAINTEXT_CODE, LINE_USER_ID);
       expect(out.tenantId).toBe(TENANT_ID);
       expect(out.companyId).toBe(COMPANY_ID);
+      expect(out.companySlug).toBe(COMPANY_SLUG);
       expect(out.redeemedAt).toBeInstanceOf(Date);
 
       // CAS asserted to be scoped to status='pending'.
