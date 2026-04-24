@@ -99,6 +99,81 @@ export function useInvoicePayments(opts: { token: string; invoiceId: string }) {
   });
 }
 
+/**
+ * usePaymentDetail — `GET /me/payments/:id` for the post-upload status page.
+ *
+ * Polling:
+ *   - While status === 'pending', refetch every 30s so the page reflects
+ *     admin confirm/reject without a manual reload (per Task #74 spec).
+ *   - Stops polling once the payment reaches a terminal state.
+ *   - Also refetches on window focus (TanStack default) so an admin OK
+ *     while the user has the LIFF backgrounded shows up on resume.
+ */
+export function usePaymentDetail(opts: { token: string; paymentId: string }) {
+  return useQuery<PaymentWire, ApiError>({
+    queryKey: ['me', 'payments', 'detail', opts.paymentId],
+    queryFn: () =>
+      apiGet(`/me/payments/${opts.paymentId}`, paymentWireSchema, { token: opts.token }),
+    enabled: Boolean(opts.token) && Boolean(opts.paymentId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'pending' ? 30_000 : false;
+    },
+    retry: (failureCount, error) => {
+      if ((error as ApiError).statusCode === 401) return false;
+      if ((error as ApiError).statusCode === 404) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+/**
+ * useSlipForPayment — `GET /me/payments/:paymentId/slip` to look up slip
+ * metadata (id) before minting the view-url. Server returns 404 if no
+ * slip is attached yet (rare — the upload mutation always registers).
+ */
+export function useSlipForPayment(opts: { token: string; paymentId: string }) {
+  return useQuery<SlipWire, ApiError>({
+    queryKey: ['me', 'payments', 'slip', opts.paymentId],
+    queryFn: () =>
+      apiGet(`/me/payments/${opts.paymentId}/slip`, slipWireSchema, { token: opts.token }),
+    enabled: Boolean(opts.token) && Boolean(opts.paymentId),
+    staleTime: 60_000, // slip metadata never changes once registered
+    retry: (failureCount, error) => {
+      if ((error as ApiError).statusCode === 401) return false;
+      if ((error as ApiError).statusCode === 404) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
+const slipViewUrlResponseSchema = z.object({
+  url: z.string().url(),
+  expiresAt: z.coerce.date(),
+});
+
+/**
+ * useSlipViewUrl — `GET /me/slips/:slipId/view-url` for the post-upload
+ * thumbnail. URL TTL is ~5 min per CLAUDE.md §3 #9; we re-fetch on every
+ * mount (no staleTime) so the user never sees a 403 from R2.
+ */
+export function useSlipViewUrl(opts: { token: string; slipId: string }) {
+  return useQuery({
+    queryKey: ['me', 'slips', 'view-url', opts.slipId],
+    queryFn: () =>
+      apiGet(`/me/slips/${opts.slipId}/view-url`, slipViewUrlResponseSchema, {
+        token: opts.token,
+      }),
+    enabled: Boolean(opts.token) && Boolean(opts.slipId),
+    staleTime: 0, // signed URL is short-lived; mint fresh per view
+    retry: (failureCount, error) => {
+      if ((error as ApiError).statusCode === 401) return false;
+      if ((error as ApiError).statusCode === 404) return false;
+      return failureCount < 2;
+    },
+  });
+}
+
 // -------------------------------------------------------------------------
 // Slip upload — orchestrated 4-step flow
 // -------------------------------------------------------------------------

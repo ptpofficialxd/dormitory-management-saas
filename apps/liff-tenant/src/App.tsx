@@ -3,6 +3,7 @@ import { BindPage } from './pages/BindPage.js';
 import { InvoiceDetailPage } from './pages/InvoiceDetailPage.js';
 import { InvoicesPage } from './pages/InvoicesPage.js';
 import { PayPage } from './pages/PayPage.js';
+import { PaymentStatusPage } from './pages/PaymentStatusPage.js';
 
 /**
  * Routes for the LIFF tenant app.
@@ -11,6 +12,7 @@ import { PayPage } from './pages/PayPage.js';
  *   /c/:companySlug/invoices             → InvoicesPage (tenant home / bills)
  *   /c/:companySlug/invoices/:id         → InvoiceDetailPage (items + history + Pay CTA)
  *   /c/:companySlug/invoices/:id/pay     → PayPage (slip upload single-page flow)
+ *   /c/:companySlug/payments/:id         → PaymentStatusPage (post-upload feedback)
  *
  * Anything else redirects to a generic "not found" — LIFF deep links should
  * always include the slug; specific surface (bind / invoices / pay) is per
@@ -23,6 +25,7 @@ export function App() {
       <Route path="/c/:companySlug/invoices" element={<InvoicesPage />} />
       <Route path="/c/:companySlug/invoices/:id" element={<InvoiceDetailPage />} />
       <Route path="/c/:companySlug/invoices/:id/pay" element={<PayPage />} />
+      <Route path="/c/:companySlug/payments/:id" element={<PaymentStatusPage />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
