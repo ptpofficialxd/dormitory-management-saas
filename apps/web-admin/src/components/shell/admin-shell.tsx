@@ -8,6 +8,7 @@ import {
   ChevronRight,
   DoorOpen,
   FileText,
+  Gauge,
   LayoutDashboard,
   Megaphone,
   Menu,
@@ -115,11 +116,20 @@ function buildNavItems(slug: string): NavItem[] {
     {
       // Billing group — invoices + payments live together because the
       // operator's daily flow goes invoice -> slip -> payment confirm.
-      // Settings page (#XX) may also slot here once company billing
-      // config (PromptPay ID, late-fee policy) lands.
+      // Readings is upstream of invoice generation (must be entered before
+      // batch-generate emits water/electric line items), so it sits at the
+      // top of the group as the first step in the monthly cycle.
       kind: 'group',
       label: 'การเงิน',
       items: [
+        {
+          kind: 'leaf',
+          label: 'ค่ามิเตอร์',
+          href: `${base}/readings`,
+          icon: Gauge,
+          ready: true,
+          requires: { action: 'read', resource: 'meter_reading' },
+        },
         {
           kind: 'leaf',
           label: 'ใบแจ้งหนี้',
@@ -174,6 +184,7 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   units: 'ห้อง',
   tenants: 'ผู้เช่า',
   contracts: 'สัญญา',
+  readings: 'ค่ามิเตอร์',
   invoices: 'ใบแจ้งหนี้',
   generate: 'สร้างรอบบิล',
   payments: 'การชำระเงิน',

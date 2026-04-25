@@ -2,6 +2,16 @@
 # Usage: docker compose up -d
 # Stop:  docker compose down
 # Reset: docker compose down -v   (drops volumes — also clears DB!)
+#
+# `name:` pins the Compose project name so renaming the host folder doesn't
+# orphan the old containers + volumes. Without this, project name defaults to
+# the folder name, and a rename leaves volumes (DB data!) attached to the
+# OLD project — new `up` then fails with "container name in use" because the
+# explicit `container_name:` below is already held by the old project.
+#
+# Convention: lowercase folder name. If you rename the folder later, KEEP
+# this value — that's the whole point of pinning it.
+name: dormitory-management-saas
 
 services:
   postgres:
