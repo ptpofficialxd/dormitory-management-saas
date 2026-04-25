@@ -33,6 +33,11 @@ import { WebhookEventStateService } from './webhook-event-state.service.js';
  *
  * `CompanyLineChannelService` is exported because `LineWebhookService`
  * uses it AND it's referenced by upstream tests directly.
+ *
+ * `LineMessagingClient` is exported (Task #83) so `NotificationModule` can
+ * push transactional 1-to-1 messages (invoice issued, payment approved/
+ * rejected) without re-instantiating the fetch wrapper. Stateless singleton
+ * — sharing it across modules is the right call.
  */
 @Module({
   imports: [BullModule.registerQueue({ name: QUEUE_NAMES.LINE_WEBHOOK })],
@@ -50,6 +55,6 @@ import { WebhookEventStateService } from './webhook-event-state.service.js';
     LineMessagingClient,
     WebhookEventStateService,
   ],
-  exports: [CompanyLineChannelService],
+  exports: [CompanyLineChannelService, LineMessagingClient],
 })
 export class LineModule {}

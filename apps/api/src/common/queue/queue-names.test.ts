@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { ALL_QUEUE_NAMES, QUEUE_NAMES } from './queue-names.js';
 
 describe('QUEUE_NAMES', () => {
-  it('exposes the three MVP queues with stable string identifiers', () => {
+  it('exposes the MVP queues with stable string identifiers', () => {
     // These values are storage keys in Redis (`bull:<name>:*`); changing them
     // is a breaking change. This test guards against silent renames.
+    // LINE_NOTIFICATION added in Task #83 — transactional 1-to-1 push queue.
     expect(QUEUE_NAMES).toEqual({
       LINE_WEBHOOK: 'line-webhook',
+      LINE_NOTIFICATION: 'line-notification',
       LINE_BROADCAST: 'line-broadcast',
       BILLING: 'billing',
     });

@@ -12,7 +12,21 @@
 export const QUEUE_NAMES = {
   /** LINE webhook events awaiting dispatch (one job per LINE event id). */
   LINE_WEBHOOK: 'line-webhook',
-  /** Outbound LINE broadcasts (announcements, billing notices). Phase 1. */
+  /**
+   * Transactional 1-to-1 LINE pushes — invoice issued, payment approved,
+   * payment rejected. One job per (kind, tenantId, invoiceId) tuple, deduped
+   * via explicit BullMQ jobId. Worker resolves tenant.lineUserId + the
+   * per-company channel, renders the Thai template, calls
+   * `LineMessagingClient.pushMessage`. Permanent errors (4xx — blocked OA,
+   * unbound tenant) are absorbed; transient errors retry per default backoff.
+   */
+  LINE_NOTIFICATION: 'line-notification',
+  /**
+   * Outbound LINE broadcasts (admin announcements, multi-recipient pushes).
+   * Distinct from `LINE_NOTIFICATION` because broadcasts use the multicast /
+   * narrowcast endpoints with very different rate-limit + retry semantics.
+   * Reserved for Phase 2 announcement composer.
+   */
   LINE_BROADCAST: 'line-broadcast',
   /** Background billing jobs (monthly invoice batch, late-fee accrual). */
   BILLING: 'billing',
