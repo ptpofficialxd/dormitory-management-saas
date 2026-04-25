@@ -159,7 +159,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'ตั้งค่า',
       href: `${base}/settings`,
       icon: Settings,
-      ready: false,
+      ready: true,
       // company:update is owner-only in the shared matrix — staff +
       // property_manager won't see this entry at all.
       requires: { action: 'update', resource: 'company' },

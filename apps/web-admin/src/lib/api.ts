@@ -52,7 +52,7 @@ interface ApiOptions {
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 async function request<S extends z.ZodTypeAny>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   body: unknown,
   schema: S,
@@ -155,6 +155,8 @@ export const api = {
     request('POST', path, body, schema, opts),
   patch: <S extends z.ZodTypeAny>(path: string, body: unknown, schema: S, opts?: ApiOptions) =>
     request('PATCH', path, body, schema, opts),
+  put: <S extends z.ZodTypeAny>(path: string, body: unknown, schema: S, opts?: ApiOptions) =>
+    request('PUT', path, body, schema, opts),
   delete: <S extends z.ZodTypeAny>(path: string, schema: S, opts?: ApiOptions) =>
     request('DELETE', path, undefined, schema, opts),
 };
