@@ -109,7 +109,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'สัญญา',
       href: `${base}/contracts`,
       icon: FileText,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'contract' },
     },
     {
