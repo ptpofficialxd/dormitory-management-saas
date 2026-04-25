@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationModule } from '../notification/notification.module.js';
 import { InvoiceController } from './invoice.controller.js';
 import { InvoiceService } from './invoice.service.js';
 import { MeInvoiceController } from './me-invoice.controller.js';
@@ -26,6 +27,11 @@ import { SlipService } from './slip.service.js';
  * import BillingModule.
  */
 @Module({
+  // NotificationModule import (Task #84) gives InvoiceService + PaymentService
+  // access to `NotificationService` for transactional LINE pushes on
+  // invoice issue / payment confirm / payment reject. NotificationModule
+  // exports only `NotificationService` — the worker stays internal.
+  imports: [NotificationModule],
   controllers: [
     InvoiceController,
     MeInvoiceController,

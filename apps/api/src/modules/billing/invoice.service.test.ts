@@ -77,6 +77,18 @@ vi.mock('@dorm/db', () => ({
 const { InvoiceService } = await import('./invoice.service.js');
 const { PromptPayService } = await import('./prompt-pay.service.js');
 
+/**
+ * Stand-in for `NotificationService` (Task #84). The service only calls
+ * `enqueueInvoiceIssued` from `issue()` — we mock that one method and assert
+ * the payload at the call-site. Producer-side errors are swallowed by the
+ * real impl, so the mock just resolves.
+ */
+class FakeNotificationService {
+  enqueueInvoiceIssued = vi.fn().mockResolvedValue(undefined);
+  enqueuePaymentApproved = vi.fn().mockResolvedValue(undefined);
+  enqueuePaymentRejected = vi.fn().mockResolvedValue(undefined);
+}
+
 const COMPANY_ID = '11111111-1111-1111-8111-111111111111';
 const CONTRACT_ID = '22222222-2222-2222-8222-222222222222';
 const FOREIGN_CONTRACT_ID = '99999999-9999-9999-8999-999999999999';
@@ -95,6 +107,7 @@ const dec = (s: string) => ({ toString: () => s });
 describe('InvoiceService', () => {
   let service: InstanceType<typeof InvoiceService>;
   let promptPay: InstanceType<typeof PromptPayService>;
+  let notification: FakeNotificationService;
   // Untyped `MockInstance` — `vi.spyOn`'s generic constraint
   // (`MethodKeysOf<T>`) doesn't resolve cleanly against a class loaded via
   // `await import()`, so we use the default `Procedure` signature here. All
@@ -122,7 +135,9 @@ describe('InvoiceService', () => {
       .mockReturnValue(
         '00020101021129370016A000000677010111011300066123456789020253037645802TH540510.0063041234',
       );
-    service = new InvoiceService(promptPay);
+    notification = new FakeNotificationService();
+    // biome-ignore lint/suspicious/noExplicitAny: structural typing across test boundary
+    service = new InvoiceService(promptPay, notification as any);
   });
 
   // ===================================================================
@@ -528,10 +543,20 @@ describe('InvoiceService', () => {
         total: '4800.00',
         items: [],
       });
-      mockCompanyFindUnique.mockResolvedValueOnce({ promptPayId: '0123456789' });
+      mockCompanyFindUnique.mockResolvedValueOnce({
+        promptPayId: '0123456789',
+        slug: 'easyslip',
+      });
+      // After Task #84, issue() reads tenantId/period/total/dueDate off the
+      // returned row to enqueue the LINE notification — make sure the mock
+      // covers all those fields.
       mockInvoiceUpdate.mockResolvedValueOnce({
         id: INVOICE_ID,
         status: 'issued',
+        tenantId: TENANT_ID,
+        period: '2026-04',
+        total: { toString: () => '4800.00' },
+        dueDate: new Date('2026-05-05T00:00:00Z'),
         items: [],
       });
 
@@ -547,6 +572,74 @@ describe('InvoiceService', () => {
       expect(args.data.issueDate).toBeInstanceOf(Date);
       expect(typeof args.data.promptPayRef).toBe('string');
       expect(args.data.promptPayRef.length).toBeGreaterThan(0);
+    });
+
+    it('enqueues an INVOICE_ISSUED LINE push after the DB update (Task #84)', async () => {
+      mockInvoiceFindUnique.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        status: 'draft',
+        total: '4800.00',
+        items: [],
+      });
+      mockCompanyFindUnique.mockResolvedValueOnce({
+        promptPayId: '0123456789',
+        slug: 'easyslip',
+      });
+      mockInvoiceUpdate.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        status: 'issued',
+        tenantId: TENANT_ID,
+        period: '2026-04',
+        total: { toString: () => '4800.00' },
+        // @db.Date in Prisma → midnight UTC; slice(0,10) → "2026-05-05".
+        dueDate: new Date('2026-05-05T00:00:00Z'),
+        items: [],
+      });
+
+      await service.issue(INVOICE_ID);
+
+      expect(notification.enqueueInvoiceIssued).toHaveBeenCalledWith({
+        companyId: COMPANY_ID,
+        companySlug: 'easyslip',
+        tenantId: TENANT_ID,
+        invoiceId: INVOICE_ID,
+        period: '2026-04',
+        totalAmount: '4800.00',
+        dueDate: '2026-05-05',
+      });
+    });
+
+    it('does NOT enqueue a notification on idempotent re-issue (already issued)', async () => {
+      // Path: status === 'issued' short-circuits to return existing → never
+      // reaches the notification call. Without this guard, every retry would
+      // double-push.
+      mockInvoiceFindUnique.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        status: 'issued',
+        promptPayRef: 'EXISTING_QR',
+        items: [],
+      });
+
+      await service.issue(INVOICE_ID);
+
+      expect(notification.enqueueInvoiceIssued).not.toHaveBeenCalled();
+    });
+
+    it('does NOT enqueue a notification when PromptPay is not configured', async () => {
+      // Path: throws before the DB update → no enqueue. Important because
+      // a notification for an invoice that didn't actually issue would
+      // surface a non-payable QR-less bill in the tenant's chat.
+      mockInvoiceFindUnique.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        status: 'draft',
+        total: '4800.00',
+        items: [],
+      });
+      mockCompanyFindUnique.mockResolvedValueOnce({ promptPayId: null, slug: 'easyslip' });
+
+      await expect(service.issue(INVOICE_ID)).rejects.toThrow(BadRequestException);
+
+      expect(notification.enqueueInvoiceIssued).not.toHaveBeenCalled();
     });
 
     it('is idempotent on already-issued (no DB update, no QR regen)', async () => {

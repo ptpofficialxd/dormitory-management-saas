@@ -9,6 +9,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type CursorPage, buildCursorPage, decodeCursor } from '../../common/util/cursor.util.js';
+import { NotificationService } from '../notification/notification.service.js';
 
 /**
  * Payment = a single attempted payment against an Invoice. The state machine
@@ -48,6 +49,8 @@ import { type CursorPage, buildCursorPage, decodeCursor } from '../../common/uti
  */
 @Injectable()
 export class PaymentService {
+  constructor(private readonly notification: NotificationService) {}
+
   // ---------------------------------------------------------------
   // Read paths
   // ---------------------------------------------------------------
@@ -302,6 +305,12 @@ export class PaymentService {
     });
     await this.recomputeInvoiceStatus(payment.invoiceId);
 
+    // Fire-and-forget LINE push (Task #84). After DB commit so we don't
+    // push for a payment that rolled back. Producer swallows errors;
+    // worker soft-skips when tenant has no lineUserId. The 2 read queries
+    // are unavoidable: invoice for period + tenantId, company for slug.
+    await this.enqueuePaymentNotification(payment, 'approved');
+
     return payment as unknown as Payment;
   }
 
@@ -333,6 +342,11 @@ export class PaymentService {
         rejectionReason,
       },
     });
+
+    // Fire-and-forget LINE push (Task #84). Tenant gets the rejection
+    // reason verbatim so they know what to fix on the next slip upload.
+    await this.enqueuePaymentNotification(updated, 'rejected', rejectionReason);
+
     return updated as unknown as Payment;
   }
 
@@ -383,6 +397,66 @@ export class PaymentService {
       await prisma.invoice.update({
         where: { id: invoiceId },
         data: { status: nextStatus },
+      });
+    }
+  }
+
+  /**
+   * Enqueue the LINE push that follows a payment status change (Task #84).
+   *
+   * Two reads are unavoidable:
+   *   - invoice → `period` + `tenantId` (tenant for the recipient resolve;
+   *     period for the template body)
+   *   - company → `slug` (LIFF deep-link path component)
+   *
+   * Run them in parallel — both are PK lookups under RLS, ~1ms each.
+   *
+   * Soft-fails silently when either lookup misses (FK guards make this
+   * unreachable in normal flow; defensive against race-with-delete). The
+   * NotificationService itself swallows producer-side queue errors.
+   *
+   * `kind` is narrowed at the call site (confirm passes 'approved', reject
+   * passes 'rejected') so we can keep the helper signature small.
+   */
+  private async enqueuePaymentNotification(
+    payment: { invoiceId: string },
+    kind: 'approved' | 'rejected',
+    reason?: string,
+  ): Promise<void> {
+    const ctx = getTenantContext();
+    if (!ctx?.companyId) return; // shouldn't happen — defensive
+
+    const [invoice, company] = await Promise.all([
+      prisma.invoice.findUnique({
+        where: { id: payment.invoiceId },
+        select: { period: true, tenantId: true },
+      }),
+      prisma.company.findUnique({
+        where: { id: ctx.companyId },
+        select: { slug: true },
+      }),
+    ]);
+
+    if (!invoice || !company) return; // FK guards usually prevent this
+
+    const base = {
+      companyId: ctx.companyId,
+      companySlug: company.slug,
+      tenantId: invoice.tenantId,
+      invoiceId: payment.invoiceId,
+      period: invoice.period,
+    };
+
+    if (kind === 'approved') {
+      await this.notification.enqueuePaymentApproved(base);
+    } else {
+      await this.notification.enqueuePaymentRejected({
+        ...base,
+        // Caller of `reject()` always supplies a reason (Zod-required at
+        // controller boundary), so this fallback should be unreachable —
+        // kept defensive so a future refactor doesn't blow up the tenant
+        // template with a literal "undefined".
+        reason: reason ?? 'ไม่ระบุเหตุผล',
       });
     }
   }

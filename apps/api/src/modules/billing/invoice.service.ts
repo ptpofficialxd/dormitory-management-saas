@@ -19,6 +19,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type CursorPage, buildCursorPage, decodeCursor } from '../../common/util/cursor.util.js';
+import { NotificationService } from '../notification/notification.service.js';
 import { PromptPayService } from './prompt-pay.service.js';
 
 /**
@@ -67,7 +68,10 @@ const TENANT_HIDDEN_INVOICE_STATUSES = ['draft', 'void'] as const;
 
 @Injectable()
 export class InvoiceService {
-  constructor(private readonly promptPay: PromptPayService) {}
+  constructor(
+    private readonly promptPay: PromptPayService,
+    private readonly notification: NotificationService,
+  ) {}
 
   // ---------------------------------------------------------------
   // Read paths
@@ -327,9 +331,12 @@ export class InvoiceService {
       });
     }
 
+    // Pull `slug` alongside `promptPayId` — slug is needed for the LIFF
+    // deep-link in the LINE notification template (Task #84). Single
+    // findUnique covers both — no extra round-trip.
     const company = await prisma.company.findUnique({
       where: { id: ctx.companyId },
-      select: { promptPayId: true },
+      select: { promptPayId: true, slug: true },
     });
     if (!company?.promptPayId) {
       throw new BadRequestException({
@@ -357,6 +364,25 @@ export class InvoiceService {
       },
       include: { items: { orderBy: { sortOrder: 'asc' } } },
     });
+
+    // Fire-and-forget LINE push (Task #84). Enqueued AFTER the DB update so
+    // we don't push for an invoice that rolled back. Producer swallows
+    // errors — a Redis blip can't fail the HTTP request. Worker handles
+    // unbound tenants / missing channels with soft-skip semantics.
+    //
+    // dueDate is `Date` from Prisma (@db.Date — midnight UTC). slice(0, 10)
+    // pulls the YYYY-MM-DD prefix without timezone math; the wire format
+    // matches what notification-templates.formatDateTh expects.
+    await this.notification.enqueueInvoiceIssued({
+      companyId: ctx.companyId,
+      companySlug: company.slug,
+      tenantId: row.tenantId,
+      invoiceId: row.id,
+      period: row.period,
+      totalAmount: row.total.toString(),
+      dueDate: row.dueDate.toISOString().slice(0, 10),
+    });
+
     return row as unknown as Invoice;
   }
 

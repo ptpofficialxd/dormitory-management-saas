@@ -48,6 +48,7 @@ const mockPaymentUpdate = vi.fn();
 const mockInvoiceFindUnique = vi.fn();
 const mockInvoiceFindFirst = vi.fn();
 const mockInvoiceUpdate = vi.fn();
+const mockCompanyFindUnique = vi.fn();
 const mockExecuteRawUnsafe = vi.fn();
 const mockGetTenantContext = vi.fn();
 
@@ -65,6 +66,9 @@ vi.mock('@dorm/db', () => ({
       findFirst: mockInvoiceFindFirst,
       update: mockInvoiceUpdate,
     },
+    company: {
+      findUnique: mockCompanyFindUnique,
+    },
     $executeRawUnsafe: mockExecuteRawUnsafe,
   },
   getTenantContext: mockGetTenantContext,
@@ -72,6 +76,18 @@ vi.mock('@dorm/db', () => ({
 }));
 
 const { PaymentService } = await import('./payment.service.js');
+
+/**
+ * Stand-in for `NotificationService` (Task #84). Confirm + reject paths now
+ * call enqueuePaymentApproved / enqueuePaymentRejected after the DB update.
+ * The mock just resolves — producer-side errors are swallowed by the real
+ * impl, so we only need to assert the call shape.
+ */
+class FakeNotificationService {
+  enqueueInvoiceIssued = vi.fn().mockResolvedValue(undefined);
+  enqueuePaymentApproved = vi.fn().mockResolvedValue(undefined);
+  enqueuePaymentRejected = vi.fn().mockResolvedValue(undefined);
+}
 
 const COMPANY_ID = '11111111-1111-1111-8111-111111111111';
 const INVOICE_ID = '22222222-2222-2222-8222-222222222222';
@@ -86,6 +102,7 @@ const dec = (s: string) => ({ toString: () => s });
 
 describe('PaymentService', () => {
   let service: InstanceType<typeof PaymentService>;
+  let notification: FakeNotificationService;
 
   beforeEach(() => {
     mockPaymentFindMany.mockReset();
@@ -96,13 +113,27 @@ describe('PaymentService', () => {
     mockInvoiceFindUnique.mockReset();
     mockInvoiceFindFirst.mockReset();
     mockInvoiceUpdate.mockReset();
+    mockCompanyFindUnique.mockReset();
     mockExecuteRawUnsafe.mockReset();
     mockGetTenantContext.mockReset();
     mockGetTenantContext.mockReturnValue({ companyId: COMPANY_ID });
     // SAVEPOINT / RELEASE / ROLLBACK are no-ops at the mock layer — pgcrypto
     // and tx-state behaviour belong to the e2e suite.
     mockExecuteRawUnsafe.mockResolvedValue(0);
-    service = new PaymentService();
+    // Default returns for the post-update enqueue path (Task #84). Tests
+    // that mock the recompute step's invoice.findUnique with
+    // mockResolvedValueOnce override the FIRST call; the SECOND call (from
+    // enqueuePaymentNotification) falls through to this default. Existing
+    // tests don't need to be updated unless they assert the enqueue itself.
+    mockInvoiceFindUnique.mockResolvedValue({
+      id: INVOICE_ID,
+      period: '2026-04',
+      tenantId: TENANT_ID,
+    });
+    mockCompanyFindUnique.mockResolvedValue({ slug: 'easyslip' });
+    notification = new FakeNotificationService();
+    // biome-ignore lint/suspicious/noExplicitAny: structural typing across test boundary
+    service = new PaymentService(notification as any);
   });
 
   // ===================================================================
@@ -554,6 +585,47 @@ describe('PaymentService', () => {
       // computed = partially_paid, current = partially_paid → no write
       expect(mockInvoiceUpdate).not.toHaveBeenCalled();
     });
+
+    it('enqueues PAYMENT_APPROVED LINE push after the DB update (Task #84)', async () => {
+      mockPaymentFindUnique.mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        status: 'pending',
+        invoiceId: INVOICE_ID,
+      });
+      mockPaymentUpdate.mockResolvedValueOnce({ id: PAYMENT_ID, invoiceId: INVOICE_ID });
+      // Recompute step fetches invoice {total, status}; default mock for
+      // the enqueue's second findUnique kicks in via mockResolvedValue
+      // (period + tenantId).
+      mockInvoiceFindUnique.mockResolvedValueOnce({
+        id: INVOICE_ID,
+        total: dec('4800.00'),
+        status: 'issued',
+      });
+      mockPaymentFindMany.mockResolvedValueOnce([{ amount: dec('4800.00') }]);
+
+      await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
+
+      expect(notification.enqueuePaymentApproved).toHaveBeenCalledWith({
+        companyId: COMPANY_ID,
+        companySlug: 'easyslip',
+        tenantId: TENANT_ID,
+        invoiceId: INVOICE_ID,
+        period: '2026-04',
+      });
+      expect(notification.enqueuePaymentRejected).not.toHaveBeenCalled();
+    });
+
+    it('does NOT enqueue on idempotent re-confirm (already confirmed)', async () => {
+      mockPaymentFindUnique.mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        status: 'confirmed',
+        invoiceId: INVOICE_ID,
+      });
+
+      await service.confirm(PAYMENT_ID, ADMIN_USER_ID);
+
+      expect(notification.enqueuePaymentApproved).not.toHaveBeenCalled();
+    });
   });
 
   // ===================================================================
@@ -597,6 +669,43 @@ describe('PaymentService', () => {
       });
       await expect(service.reject(PAYMENT_ID, 'oops')).rejects.toThrow(ConflictException);
       expect(mockPaymentUpdate).not.toHaveBeenCalled();
+    });
+
+    it('enqueues PAYMENT_REJECTED LINE push with the verbatim reason (Task #84)', async () => {
+      mockPaymentFindUnique.mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        status: 'pending',
+        invoiceId: INVOICE_ID,
+      });
+      mockPaymentUpdate.mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        status: 'rejected',
+        invoiceId: INVOICE_ID,
+      });
+
+      await service.reject(PAYMENT_ID, 'ยอดเงินในสลิปไม่ตรงกับใบแจ้งหนี้');
+
+      expect(notification.enqueuePaymentRejected).toHaveBeenCalledWith({
+        companyId: COMPANY_ID,
+        companySlug: 'easyslip',
+        tenantId: TENANT_ID,
+        invoiceId: INVOICE_ID,
+        period: '2026-04',
+        reason: 'ยอดเงินในสลิปไม่ตรงกับใบแจ้งหนี้',
+      });
+      expect(notification.enqueuePaymentApproved).not.toHaveBeenCalled();
+    });
+
+    it('does NOT enqueue on idempotent re-reject (already rejected)', async () => {
+      mockPaymentFindUnique.mockResolvedValueOnce({
+        id: PAYMENT_ID,
+        status: 'rejected',
+        invoiceId: INVOICE_ID,
+      });
+
+      await service.reject(PAYMENT_ID, 'still bad');
+
+      expect(notification.enqueuePaymentRejected).not.toHaveBeenCalled();
     });
   });
 });
