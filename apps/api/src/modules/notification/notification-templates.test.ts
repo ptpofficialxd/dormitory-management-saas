@@ -73,18 +73,34 @@ describe('formatDateTh', () => {
 });
 
 describe('buildInvoiceLiffUrl', () => {
-  it('appends ?path= when LIFF_BIND_URL has no query string', () => {
+  it('produces a native LIFF deep-link by appending the sub-path', () => {
     const url = __testables.buildInvoiceLiffUrl({
       companySlug: COMPANY_SLUG,
       invoiceId: INVOICE_ID,
     });
-    expect(url).toContain('https://liff.line.me/1234567890-test?path=');
-    expect(url).toContain(encodeURIComponent(`/c/${COMPANY_SLUG}/invoices/${INVOICE_ID}`));
+    // LINE forwards the sub-path to the endpoint URL verbatim — no ?path=
+    // query trick needed (liff.state handles route restoration after OAuth).
+    expect(url).toBe(
+      `https://liff.line.me/1234567890-test/c/${COMPANY_SLUG}/invoices/${INVOICE_ID}`,
+    );
+  });
+
+  it('does not produce double slashes between LIFF base and sub-path', () => {
+    // Defensive: the implementation `.replace(/\/+$/, '')`s a trailing slash
+    // on LIFF_BIND_URL so a misconfigured env doesn't yield `//c/...` URLs
+    // (which break LINE's redirect handler). Output should never contain
+    // `//` anywhere except in the `https://` protocol prefix.
+    const url = __testables.buildInvoiceLiffUrl({
+      companySlug: COMPANY_SLUG,
+      invoiceId: INVOICE_ID,
+    });
+    const afterProtocol = url.replace(/^https?:\/\//, '');
+    expect(afterProtocol).not.toContain('//');
   });
 });
 
 describe('renderInvoiceIssued', () => {
-  it('includes the period, formatted amount, formatted date, and LIFF URL', () => {
+  it('includes the period, formatted amount, formatted date, and native LIFF deep-link', () => {
     const text = renderInvoiceIssued({
       kind: 'invoice_issued',
       ...BASE,
@@ -96,8 +112,10 @@ describe('renderInvoiceIssued', () => {
     expect(text).toContain('5,500.00 บาท');
     expect(text).toContain('30');
     expect(text).toContain('2569');
-    expect(text).toContain('https://liff.line.me/1234567890-test');
-    expect(text).toContain(encodeURIComponent(`/c/${COMPANY_SLUG}/invoices/${INVOICE_ID}`));
+    // Native LIFF deep-link — sub-path appended to the LIFF base URL.
+    expect(text).toContain(
+      `https://liff.line.me/1234567890-test/c/${COMPANY_SLUG}/invoices/${INVOICE_ID}`,
+    );
   });
 });
 
@@ -115,7 +133,7 @@ describe('renderPaymentApproved', () => {
 });
 
 describe('renderPaymentRejected', () => {
-  it('includes the period, the verbatim reason, and the LIFF retry URL', () => {
+  it('includes the period, the verbatim reason, and the native LIFF retry URL', () => {
     const text = renderPaymentRejected({
       kind: 'payment_rejected',
       ...BASE,
@@ -124,8 +142,9 @@ describe('renderPaymentRejected', () => {
 
     expect(text).toContain('❌ สลิปบิลรอบ 2026-04');
     expect(text).toContain('ยอดเงินในสลิปไม่ตรงกับใบแจ้งหนี้');
-    expect(text).toContain('https://liff.line.me/1234567890-test');
-    expect(text).toContain(encodeURIComponent(`/c/${COMPANY_SLUG}/invoices/${INVOICE_ID}`));
+    expect(text).toContain(
+      `https://liff.line.me/1234567890-test/c/${COMPANY_SLUG}/invoices/${INVOICE_ID}`,
+    );
   });
 
   it('passes the reason through verbatim (no escape / sanitisation here)', () => {

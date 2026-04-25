@@ -31,13 +31,27 @@ import type {
  *   - Period (`YYYY-MM`) is shown as-is — operators recognise it instantly
  */
 
-/** Build the LIFF deep-link to an invoice detail page. */
+/**
+ * Build the LIFF deep-link to an invoice detail page.
+ *
+ * LIFF deep-link convention:
+ *   `https://liff.line.me/{LIFF_ID}/c/{slug}/invoices/{id}`
+ *
+ * LINE forwards the sub-path verbatim to the configured Endpoint URL, so
+ * `liff.line.me/{LIFF_ID}/c/easyslip/invoices/abc` lands on
+ * `<endpoint>/c/easyslip/invoices/abc`. The LIFF SDK then encodes the
+ * sub-URL into `?liff.state=` during the OAuth round-trip and restores it
+ * via `history.replaceState` after `liff.init()` resolves — see
+ * `apps/liff-tenant/src/main.tsx` JSDoc for the routing contract.
+ *
+ * `LIFF_BIND_URL` is the LIFF base URL (`https://liff.line.me/{LIFF_ID}`)
+ * — name kept for back-compat with `buildLiffBindUrl` in
+ * line-event-handler. We trim a trailing slash defensively so the joined
+ * path doesn't end up with `//c/...`.
+ */
 function buildInvoiceLiffUrl(args: { companySlug: string; invoiceId: string }): string {
-  const path = `/c/${args.companySlug}/invoices/${args.invoiceId}`;
-  // LIFF_BIND_URL may already carry a query string in dev (?company= placeholder).
-  // Re-using the same `?` / `&` heuristic as line-event-handler.service.ts.
-  const sep = env.LIFF_BIND_URL.includes('?') ? '&' : '?';
-  return `${env.LIFF_BIND_URL}${sep}path=${encodeURIComponent(path)}`;
+  const base = env.LIFF_BIND_URL.replace(/\/+$/, '');
+  return `${base}/c/${args.companySlug}/invoices/${args.invoiceId}`;
 }
 
 /**
