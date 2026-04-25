@@ -101,7 +101,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'ผู้เช่า',
       href: `${base}/tenants`,
       icon: Users,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'tenant_user' },
     },
     {
