@@ -23,6 +23,7 @@ import { StorageModule } from './modules/storage/storage.module.js';
 import { TenantInviteModule } from './modules/tenant-invite/tenant-invite.module.js';
 import { TenantModule } from './modules/tenant/tenant.module.js';
 import { UnitModule } from './modules/unit/unit.module.js';
+import { UserModule } from './modules/user/user.module.js';
 
 /**
  * Root module — wires global cross-cutting concerns once.
@@ -66,6 +67,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
     LineModule,
     NotificationModule,
     MaintenanceModule,
+    UserModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

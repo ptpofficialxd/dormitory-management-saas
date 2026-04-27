@@ -6,6 +6,7 @@
 export * from './primitives.js';
 export * from './auth.js';
 export * from './company.js';
+export * from './user.js';
 export * from './property.js';
 export * from './unit.js';
 export * from './tenant.js';
