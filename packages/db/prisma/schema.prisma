@@ -135,6 +135,55 @@ enum TenantInviteStatus {
 }
 
 // =========================================================================
+// Maintenance enums (Sprint B / Task #87) — mirror @dorm/shared/zod/maintenance.ts
+//
+// Status state machine (enforced by service):
+//   open → in_progress → resolved → closed
+//                          ↓
+//                      cancelled (terminal from any non-resolved state)
+// `cancelled` is its own terminal — distinct from `closed` so audit trails
+// can tell "we fixed it" apart from "we won't fix it" (admin discretion).
+//
+// Priority drives admin sort order + future SLA. `normal` is the default at
+// the Zod input boundary (tenants don't pick a priority — admin triages).
+//
+// Category drives icon + future routing. Keep this small; adding a value is
+// a Prisma enum migration + Zod enum widen + admin UI label update.
+// =========================================================================
+
+enum MaintenanceStatus {
+  open
+  in_progress
+  resolved
+  closed
+  cancelled
+
+  @@map("maintenance_status")
+}
+
+enum MaintenancePriority {
+  low
+  normal
+  high
+  urgent
+
+  @@map("maintenance_priority")
+}
+
+enum MaintenanceCategory {
+  plumbing
+  electrical
+  aircon
+  appliance
+  furniture
+  structural
+  internet
+  other
+
+  @@map("maintenance_category")
+}
+
+// =========================================================================
 // Company — tenant root (every other tenant-owned row references this id)
 // =========================================================================
 
@@ -179,6 +228,7 @@ model Company {
   lineChannel     CompanyLineChannel?
   webhookEvents   WebhookEvent[]
   tenantInvites   TenantInvite[]
+  maintenanceRequests MaintenanceRequest[]
 
   @@index([status])
   @@map("company")
@@ -206,6 +256,11 @@ model User {
   readingsTakenBy     Reading[]        @relation("ReadingTakenBy")
   paymentsConfirmed   Payment[]        @relation("PaymentConfirmer")
   tenantInvitesIssued TenantInvite[]   @relation("TenantInviteIssuer")
+  // Sprint B (Task #87): maintenance tickets the staff/manager has been
+  // assigned to. SetNull on user delete so the ticket history survives —
+  // operator's "who did this work" admin view falls back to "unassigned"
+  // if the user record is later removed (audit log keeps the snapshot).
+  maintenanceAssigned MaintenanceRequest[] @relation("MaintenanceAssignee")
 
   // Email uniqueness scoped to company — same email may register at multiple dorms.
   @@unique([companyId, email])
@@ -277,6 +332,7 @@ model Unit {
   contracts Contract[]
   meters    Meter[]
   invoices  Invoice[]
+  maintenanceRequests MaintenanceRequest[]
 
   @@unique([propertyId, unitNumber])
   @@index([companyId])
@@ -342,6 +398,7 @@ model Tenant {
   invoices  Invoice[]
   payments  Payment[]
   invites   TenantInvite[]
+  maintenanceRequests MaintenanceRequest[]
 
   // One tenant record per (company, LINE userId). Same LINE user may be a
   // tenant at multiple dorms — each gets a separate row.
@@ -781,4 +838,83 @@ model TenantInvite {
   // the candidate set before constant-time hash compare across the matches.
   @@index([codePrefix, status])
   @@map("tenant_invite")
+}
+
+// =========================================================================
+// MaintenanceRequest (Sprint B / Task #87)
+// =========================================================================
+// Tenant-reported repair tickets. Created via LIFF, triaged + resolved by
+// staff/manager from admin web. Photos live in R2 (private bucket) — the
+// row holds object KEYS only; signed URLs are minted per-request with TTL
+// ≤ 5 min (CLAUDE.md §3.9, mirrored from `slip` and `reading.photoKey`).
+//
+// Status state machine (enforced by MaintenanceService):
+//   open → in_progress → resolved → closed
+//                ↓
+//            cancelled (terminal from any non-resolved state)
+//
+// `assignedToUserId` is INDEPENDENT of status — a ticket can be `open`
+// with no assignee yet, or `in_progress` with a known assignee. The
+// service does NOT auto-assign on status flip; admin sets it explicitly
+// via the same PATCH endpoint.
+//
+// `photoR2Keys String[]` — Postgres native array, capped at 10 entries by
+// the Zod input schema (LINE rich messages cap at 10 anyway). No separate
+// child table for photos: query patterns are always "fetch the ticket,
+// show all photos" — never "find tickets where photo X belongs to". An
+// array column avoids a JOIN on every read.
+//
+// Indexes:
+//   - (companyId, status) — admin list filtered by status (most common)
+//   - (companyId, createdAt DESC) — admin "newest tickets" view
+//   - (tenantId, createdAt DESC) — LIFF "my tickets" view
+//   - (assignedToUserId) — staff "what's on my plate" (Phase 2 dashboard)
+//   - (unitId) — historical view per unit (rare; defensive)
+//
+// FK delete strategy:
+//   - company: Restrict (audit history matters more than easy delete)
+//   - unit: Restrict (same — keep history if unit is removed/repurposed)
+//   - tenant: Restrict (PII tenant deletes go through soft-delete anyway)
+//   - assignedToUser: SetNull (admin user might be removed; ticket survives
+//     with "unassigned" assignee, audit log preserves the original)
+//
+// No `closedAt` column in MVP — `closed` is a terminal state and we read
+// `updatedAt` for "when was this closed" if ever needed. Phase 2 may add
+// it explicitly if the dashboard needs to display close-out times.
+// =========================================================================
+
+model MaintenanceRequest {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId          String              @map("company_id") @db.Uuid
+  unitId             String              @map("unit_id") @db.Uuid
+  tenantId           String              @map("tenant_id") @db.Uuid
+  category           MaintenanceCategory
+  title              String              @db.VarChar(128)
+  description        String              @db.VarChar(2048)
+  priority           MaintenancePriority @default(normal)
+  status             MaintenanceStatus   @default(open)
+  // R2 object keys — signed URLs minted by API on demand (≤ 5 min TTL).
+  // Postgres native array; max 10 entries enforced at the Zod boundary.
+  photoR2Keys        String[]            @map("photo_r2_keys") @db.VarChar(512)
+  assignedToUserId   String?             @map("assigned_to_user_id") @db.Uuid
+  // Public-facing note from staff (shown to tenant on status update).
+  // Required by service when status transitions to `resolved` or `cancelled`.
+  resolutionNote     String?             @map("resolution_note") @db.VarChar(2048)
+  // Set on terminal transition into `resolved`. NULL otherwise (including
+  // `cancelled` — that has its own audit row + separate notification).
+  resolvedAt         DateTime?           @map("resolved_at") @db.Timestamptz(6)
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  unit           Unit    @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  tenant         Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  assignedToUser User?   @relation("MaintenanceAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, status])
+  @@index([companyId, createdAt(sort: Desc)])
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([assignedToUserId])
+  @@index([unitId])
+  @@map("maintenance_request")
 }

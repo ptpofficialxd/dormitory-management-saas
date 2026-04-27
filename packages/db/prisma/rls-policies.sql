@@ -229,6 +229,20 @@ CREATE POLICY tenant_isolation ON webhook_event
   USING (app_rls_bypass() OR company_id = app_current_company_id())
   WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
 
+-- ==== maintenance_request ================================================
+-- Sprint B / Task #87. Both admin (web-admin /c/:slug/maintenance) and tenant
+-- (LIFF /me/maintenance) paths run inside `withTenant({ companyId })` so the
+-- standard policy fires. Tenant scope is further narrowed at the service
+-- layer (`tenantId = req.user.sub`) — RLS handles cross-company isolation;
+-- service handles cross-tenant-within-company isolation.
+ALTER TABLE maintenance_request ENABLE ROW LEVEL SECURITY;
+ALTER TABLE maintenance_request FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON maintenance_request;
+CREATE POLICY tenant_isolation ON maintenance_request
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
 -- -------------------------------------------------------------------------
 -- Append-only enforcement for audit_log (CLAUDE.md §3.7).
 -- UPDATE / DELETE are denied even by the bypass role.
