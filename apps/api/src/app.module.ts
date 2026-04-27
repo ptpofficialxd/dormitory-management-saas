@@ -14,6 +14,7 @@ import { CompanyModule } from './modules/company/company.module.js';
 import { ContractModule } from './modules/contract/contract.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { LineModule } from './modules/line/line.module.js';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
 import { MeterModule } from './modules/meter/meter.module.js';
 import { NotificationModule } from './modules/notification/notification.module.js';
 import { PropertyModule } from './modules/property/property.module.js';
@@ -64,6 +65,7 @@ import { UnitModule } from './modules/unit/unit.module.js';
     BillingModule,
     LineModule,
     NotificationModule,
+    MaintenanceModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },

@@ -57,6 +57,13 @@ const r2ObjectKeySchema = z.string().min(1).max(512);
 
 /**
  * Full ticket row — used by `GET /c/:slug/maintenance/:id` responses.
+ *
+ * Date fields use `z.date()` (NOT `isoUtcSchema`) to match the rest of the
+ * domain models (Invoice / Contract / Payment / Tenant) — Prisma returns
+ * `Date` objects, and consumer apps (web-admin / liff-tenant) re-derive
+ * with `z.coerce.date()` at the wire boundary so JSON ISO strings parse
+ * cleanly. Using `isoUtcSchema` here would mismatch Prisma's runtime type
+ * + break `buildCursorPage<T>` which keys off `T['createdAt']`.
  */
 export const maintenanceRequestSchema = z.object({
   id: uuidSchema,
@@ -75,9 +82,9 @@ export const maintenanceRequestSchema = z.object({
   assignedToUserId: uuidSchema.nullable(),
   /** Public-facing note from staff (shown to tenant on status update). */
   resolutionNote: z.string().max(2048).nullable(),
-  resolvedAt: isoUtcSchema.nullable(),
-  createdAt: isoUtcSchema,
-  updatedAt: isoUtcSchema,
+  resolvedAt: z.date().nullable(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
 });
 export type MaintenanceRequest = z.infer<typeof maintenanceRequestSchema>;
 
@@ -131,18 +138,80 @@ export type UpdateMaintenanceRequestInput = z.infer<typeof updateMaintenanceRequ
  * Query params for `GET /c/:slug/maintenance`. All filters AND together;
  * cursor-paginated. `mine=true` on the LIFF surface filters by authenticated
  * tenantId — but that's enforced server-side so it's not in this schema.
+ *
+ * `tenantId` filter on the admin path so the slip-review-style "show me a
+ * specific tenant's tickets" workflow works without a separate endpoint.
+ * On the LIFF path the controller IGNORES caller-supplied tenantId and
+ * forces it from the JWT — the schema permits the field for symmetry.
  */
 export const listMaintenanceRequestsInputSchema = z.object({
   status: maintenanceStatusSchema.optional(),
   priority: maintenancePrioritySchema.optional(),
   category: maintenanceCategorySchema.optional(),
   unitId: uuidSchema.optional(),
+  tenantId: uuidSchema.optional(),
   assignedToUserId: uuidSchema.optional(),
   /** Inclusive start — filter on `created_at`. */
   fromDate: isoUtcSchema.optional(),
   /** Exclusive end — filter on `created_at`. */
   toDate: isoUtcSchema.optional(),
   cursor: cursorSchema.optional(),
-  limit: z.number().int().min(1).max(100).default(20),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
 });
 export type ListMaintenanceRequestsInput = z.infer<typeof listMaintenanceRequestsInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Photo upload + view URL contracts (Sprint B / Task #88)
+//
+// Mirrors the Slip flow (upload-url → PUT to R2 → register) but adapted to
+// the maintenance-ticket lifecycle: photos are uploaded BEFORE the ticket
+// row exists (LIFF UX is "describe → photo → submit"), so the R2 key is
+// scoped by `tenantId` (the only known entity at upload time), NOT by
+// ticketId. At create time, the tenant submits an array of `photoR2Keys`
+// the server has previously minted for them.
+// ---------------------------------------------------------------------------
+
+/**
+ * Allowed maintenance photo MIME types. Subset of slip's allowlist —
+ * tickets are visual-only (no PDF receipts), so we narrow to image kinds.
+ */
+export const maintenancePhotoMimeTypeSchema = z.enum(['image/jpeg', 'image/png', 'image/webp']);
+export type MaintenancePhotoMimeType = z.infer<typeof maintenancePhotoMimeTypeSchema>;
+
+/** Max photo size — 10 MB. LIFF must compress before upload (matches slip). */
+export const MAINTENANCE_PHOTO_MAX_SIZE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Input for `POST /me/maintenance/photos/upload-url` — tenant tells server
+ * "I'm about to upload a maintenance photo of THIS mime + THIS size", and
+ * server replies with a presigned PUT URL + a deterministic `r2ObjectKey`.
+ *
+ * The tenant collects multiple keys (one per photo) and submits the array
+ * with the create-ticket POST. There is no separate "register photo" call
+ * — the server validates each key's R2 HEAD inside `createForTenant`.
+ */
+export const maintenancePhotoUploadUrlInputSchema = z.object({
+  mimeType: maintenancePhotoMimeTypeSchema,
+  sizeBytes: z.number().int().min(1).max(MAINTENANCE_PHOTO_MAX_SIZE_BYTES),
+});
+export type MaintenancePhotoUploadUrlInput = z.infer<typeof maintenancePhotoUploadUrlInputSchema>;
+
+/** Response for `POST /me/maintenance/photos/upload-url`. */
+export const maintenancePhotoUploadUrlResponseSchema = z.object({
+  url: z.string().url(),
+  r2ObjectKey: z.string().min(1).max(512),
+  expiresAt: isoUtcSchema,
+});
+export type MaintenancePhotoUploadUrlResponse = z.infer<
+  typeof maintenancePhotoUploadUrlResponseSchema
+>;
+
+/**
+ * Response for `GET /c/:slug/maintenance/:id/photos/:key/view-url` — admin
+ * preview of a tenant-uploaded photo. TTL ≤ 5 min per CLAUDE.md §3.9.
+ */
+export const maintenancePhotoViewUrlResponseSchema = z.object({
+  url: z.string().url(),
+  expiresAt: isoUtcSchema,
+});
+export type MaintenancePhotoViewUrlResponse = z.infer<typeof maintenancePhotoViewUrlResponseSchema>;
