@@ -153,7 +153,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'แจ้งซ่อม',
       href: `${base}/maintenance`,
       icon: Wrench,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'maintenance_ticket' },
     },
     {
