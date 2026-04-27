@@ -33,8 +33,29 @@ export default defineConfig({
     },
   },
   server: {
+    // Bind to localhost only to prevent the LAN/WAN-exposed dev server
+    // (the surface for the 2026-04-26 dev-server exploitation attempt —
+    // wget|sh malware drop + Server Action enumeration from 176.65.134.6).
+    // For LIFF testing on a real LINE client, use a tunneling tool (Pinggy /
+    // cloudflared / ngrok) which proxies localhost → public HTTPS without
+    // exposing the dev server directly. Tunnels also let you scope auth.
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    // Vite 5.4.18+ enforces Host header validation by default
+    // (CVE-2025-31125 / CVE-2025-31486 / CVE-2025-32395 — DNS rebinding
+    // protection). Bind-to-localhost above means external Hosts are rejected
+    // unless explicitly allow-listed. We allow common tunneling vendors so
+    // LIFF testing on real LINE clients keeps working — these are HTTPS-only
+    // managed tunnels, so allowing the wildcard does NOT widen the attack
+    // surface from the localhost-bound choice.
+    allowedHosts: [
+      '.trycloudflare.com', // Cloudflare Quick Tunnel (URL changes each run)
+      '.ngrok.io',
+      '.ngrok-free.app',
+      '.pinggy.link',
+      '.loca.lt', // localtunnel
+    ],
   },
   build: {
     outDir: 'dist',
