@@ -478,18 +478,18 @@ describe('MaintenanceService', () => {
     it('refuses cancel when status is in_progress (409)', async () => {
       mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'in_progress' });
 
-      await expect(
-        service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID)).rejects.toThrow(
+        ConflictException,
+      );
       expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses cancel when status is resolved (409)', async () => {
       mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'resolved' });
 
-      await expect(
-        service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID)).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('returns 404 (NEVER 403) on cross-tenant probe', async () => {
@@ -561,11 +561,7 @@ describe('MaintenanceService', () => {
         photoR2Keys: [VALID_PHOTO_KEY, newKey],
       });
 
-      await service.updateForTenant(
-        TICKET_ID,
-        { appendPhotoR2Keys: [newKey] },
-        TENANT_ID,
-      );
+      await service.updateForTenant(TICKET_ID, { appendPhotoR2Keys: [newKey] }, TENANT_ID);
 
       expect(storage.headObject).toHaveBeenCalledWith(newKey);
       expect(mockMaintenanceUpdate).toHaveBeenCalledWith({
@@ -578,11 +574,7 @@ describe('MaintenanceService', () => {
       mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
 
       await expect(
-        service.updateForTenant(
-          TICKET_ID,
-          { appendPhotoR2Keys: [FOREIGN_PHOTO_KEY] },
-          TENANT_ID,
-        ),
+        service.updateForTenant(TICKET_ID, { appendPhotoR2Keys: [FOREIGN_PHOTO_KEY] }, TENANT_ID),
       ).rejects.toThrow(BadRequestException);
       expect(storage.headObject).not.toHaveBeenCalled();
       expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
@@ -621,11 +613,7 @@ describe('MaintenanceService', () => {
       mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
 
       await expect(
-        service.updateForTenant(
-          TICKET_ID,
-          { cancel: true, description: 'oops' },
-          TENANT_ID,
-        ),
+        service.updateForTenant(TICKET_ID, { cancel: true, description: 'oops' }, TENANT_ID),
       ).rejects.toThrow(BadRequestException);
     });
 
