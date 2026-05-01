@@ -433,4 +433,238 @@ describe('MaintenanceService', () => {
       );
     });
   });
+
+  // =====================================================================
+  // updateForTenant — tenant self-update (Sprint B / Task #100)
+  // =====================================================================
+
+  describe('updateForTenant', () => {
+    const baseTicket = {
+      id: TICKET_ID,
+      companyId: COMPANY_ID,
+      tenantId: TENANT_ID,
+      unitId: UNIT_ID,
+      category: 'plumbing',
+      title: 'Tap leaking',
+      description: 'Original description',
+      priority: 'normal',
+      status: 'open',
+      photoR2Keys: [VALID_PHOTO_KEY],
+      assignedToUserId: null,
+      resolutionNote: null,
+      resolvedAt: null,
+      createdAt: new Date('2026-04-20T10:00:00Z'),
+      updatedAt: new Date('2026-04-20T10:00:00Z'),
+    };
+
+    it('cancels an open ticket + sets sentinel resolutionNote', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+      mockMaintenanceUpdate.mockResolvedValueOnce({
+        ...baseTicket,
+        status: 'cancelled',
+        resolutionNote: 'ผู้เช่ายกเลิกเอง',
+      });
+
+      const out = await service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID);
+
+      expect(mockMaintenanceUpdate).toHaveBeenCalledWith({
+        where: { id: TICKET_ID },
+        data: { status: 'cancelled', resolutionNote: 'ผู้เช่ายกเลิกเอง' },
+      });
+      expect(out.status).toBe('cancelled');
+      expect(out.resolutionNote).toBe('ผู้เช่ายกเลิกเอง');
+    });
+
+    it('refuses cancel when status is in_progress (409)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'in_progress' });
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID),
+      ).rejects.toThrow(ConflictException);
+      expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses cancel when status is resolved (409)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'resolved' });
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { cancel: true }, TENANT_ID),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('returns 404 (NEVER 403) on cross-tenant probe', async () => {
+      // getByIdForTenant uses findFirst with WHERE { id, tenantId } — a
+      // foreign tenant just gets `null` back, surfaces as NotFoundException.
+      mockMaintenanceFindFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { cancel: true }, OTHER_TENANT_ID),
+      ).rejects.toThrow(NotFoundException);
+      expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
+    });
+
+    it('updates description when status=open', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+      mockMaintenanceUpdate.mockResolvedValueOnce({
+        ...baseTicket,
+        description: 'Updated description with more detail',
+      });
+
+      await service.updateForTenant(
+        TICKET_ID,
+        { description: 'Updated description with more detail' },
+        TENANT_ID,
+      );
+
+      expect(mockMaintenanceUpdate).toHaveBeenCalledWith({
+        where: { id: TICKET_ID },
+        data: { description: 'Updated description with more detail' },
+      });
+    });
+
+    it('updates description when status=in_progress', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'in_progress' });
+      mockMaintenanceUpdate.mockResolvedValueOnce({
+        ...baseTicket,
+        status: 'in_progress',
+        description: 'More info',
+      });
+
+      await service.updateForTenant(TICKET_ID, { description: 'More info' }, TENANT_ID);
+
+      expect(mockMaintenanceUpdate).toHaveBeenCalled();
+    });
+
+    it('refuses description edit when status=resolved (409)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'resolved' });
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { description: 'late edit' }, TENANT_ID),
+      ).rejects.toThrow(ConflictException);
+      expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses description edit when status=cancelled (409)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, status: 'cancelled' });
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { description: 'late edit' }, TENANT_ID),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('appends photos with prefix + HEAD validation', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+      storage.headObject.mockResolvedValueOnce({ contentType: 'image/jpeg', size: 1000 });
+      const newKey = `companies/${COMPANY_ID}/maintenance/${TENANT_ID}/new-photo.jpg`;
+      mockMaintenanceUpdate.mockResolvedValueOnce({
+        ...baseTicket,
+        photoR2Keys: [VALID_PHOTO_KEY, newKey],
+      });
+
+      await service.updateForTenant(
+        TICKET_ID,
+        { appendPhotoR2Keys: [newKey] },
+        TENANT_ID,
+      );
+
+      expect(storage.headObject).toHaveBeenCalledWith(newKey);
+      expect(mockMaintenanceUpdate).toHaveBeenCalledWith({
+        where: { id: TICKET_ID },
+        data: { photoR2Keys: [VALID_PHOTO_KEY, newKey] },
+      });
+    });
+
+    it('rejects appended photo with foreign tenant prefix (400)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+
+      await expect(
+        service.updateForTenant(
+          TICKET_ID,
+          { appendPhotoR2Keys: [FOREIGN_PHOTO_KEY] },
+          TENANT_ID,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(storage.headObject).not.toHaveBeenCalled();
+      expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects appended photo missing from R2 (HEAD returns null) — 400', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+      storage.headObject.mockResolvedValueOnce(null);
+      const newKey = `companies/${COMPANY_ID}/maintenance/${TENANT_ID}/missing.jpg`;
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { appendPhotoR2Keys: [newKey] }, TENANT_ID),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockMaintenanceUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses photo append when combined total > MAINTENANCE_PHOTO_MAX (400)', async () => {
+      // Existing 8 + appending 5 = 13 > 10
+      const existingKeys = Array.from(
+        { length: 8 },
+        (_, i) => `companies/${COMPANY_ID}/maintenance/${TENANT_ID}/existing-${i}.jpg`,
+      );
+      const newKeys = Array.from(
+        { length: 5 },
+        (_, i) => `companies/${COMPANY_ID}/maintenance/${TENANT_ID}/new-${i}.jpg`,
+      );
+      mockMaintenanceFindFirst.mockResolvedValueOnce({ ...baseTicket, photoR2Keys: existingKeys });
+
+      await expect(
+        service.updateForTenant(TICKET_ID, { appendPhotoR2Keys: newKeys }, TENANT_ID),
+      ).rejects.toThrow(BadRequestException);
+      expect(storage.headObject).not.toHaveBeenCalled();
+    });
+
+    it('refuses cancel + description in same call (400)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+
+      await expect(
+        service.updateForTenant(
+          TICKET_ID,
+          { cancel: true, description: 'oops' },
+          TENANT_ID,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses cancel + photo append in same call (400)', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+      const newKey = `companies/${COMPANY_ID}/maintenance/${TENANT_ID}/x.jpg`;
+
+      await expect(
+        service.updateForTenant(
+          TICKET_ID,
+          { cancel: true, appendPhotoR2Keys: [newKey] },
+          TENANT_ID,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('combines description + photo append in single update', async () => {
+      mockMaintenanceFindFirst.mockResolvedValueOnce(baseTicket);
+      storage.headObject.mockResolvedValueOnce({ contentType: 'image/jpeg', size: 500 });
+      const newKey = `companies/${COMPANY_ID}/maintenance/${TENANT_ID}/extra.jpg`;
+      mockMaintenanceUpdate.mockResolvedValueOnce({
+        ...baseTicket,
+        description: 'Updated + photo',
+        photoR2Keys: [VALID_PHOTO_KEY, newKey],
+      });
+
+      await service.updateForTenant(
+        TICKET_ID,
+        { description: 'Updated + photo', appendPhotoR2Keys: [newKey] },
+        TENANT_ID,
+      );
+
+      expect(mockMaintenanceUpdate).toHaveBeenCalledWith({
+        where: { id: TICKET_ID },
+        data: {
+          description: 'Updated + photo',
+          photoR2Keys: [VALID_PHOTO_KEY, newKey],
+        },
+      });
+    });
+  });
 });

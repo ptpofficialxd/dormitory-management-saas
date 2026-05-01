@@ -215,3 +215,49 @@ export const maintenancePhotoViewUrlResponseSchema = z.object({
   expiresAt: isoUtcSchema,
 });
 export type MaintenancePhotoViewUrlResponse = z.infer<typeof maintenancePhotoViewUrlResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Tenant self-update (Sprint B / Task #100)
+//
+// Distinct from `updateMaintenanceRequestInputSchema` (admin) — tenant can:
+//   - cancel their own ticket (only when status=open)
+//   - extend `description` (when status in [open, in_progress])
+//   - APPEND photos (when status in [open, in_progress]) — never replace,
+//     never remove (preserves audit trail of original report)
+//
+// Tenant CANNOT:
+//   - change title / category / priority (those define the ticket identity;
+//     if wrong, cancel + re-create)
+//   - assign / change status to anything other than `cancelled`
+//   - edit `resolutionNote` (that's staff-authored)
+//
+// Service-layer enforces:
+//   - state machine: cancel only allowed when status=open (other transitions
+//     throw 409); description / photo append only when status in
+//     [open, in_progress]
+//   - photo prefix re-validation (every appended key must start with
+//     `companies/{companyId}/maintenance/{tenantId}/`) + R2 HEAD
+//   - combined cap: existing.photoR2Keys.length + appendPhotoR2Keys.length
+//     ≤ MAINTENANCE_PHOTO_MAX
+// ---------------------------------------------------------------------------
+
+export const tenantUpdateMaintenanceRequestInputSchema = z
+  .object({
+    /** Updated free-form description (replaces, not appends). */
+    description: z.string().min(1).max(2048).optional(),
+    /** R2 keys to APPEND to `photoR2Keys`. Each must pass the same prefix +
+     *  HEAD validation as on create. */
+    appendPhotoR2Keys: z.array(r2ObjectKeySchema).max(MAINTENANCE_PHOTO_MAX).optional(),
+    /** Tenant-initiated cancel — service rejects if status !== 'open'. */
+    cancel: z.literal(true).optional(),
+  })
+  .refine(
+    (v) =>
+      v.description !== undefined ||
+      (v.appendPhotoR2Keys !== undefined && v.appendPhotoR2Keys.length > 0) ||
+      v.cancel === true,
+    'At least one of description / appendPhotoR2Keys / cancel must be provided',
+  );
+export type TenantUpdateMaintenanceRequestInput = z.infer<
+  typeof tenantUpdateMaintenanceRequestInputSchema
+>;

@@ -6,11 +6,13 @@ import {
   type MaintenancePhotoViewUrlResponse,
   type MaintenanceRequest,
   type TenantJwtClaims,
+  type TenantUpdateMaintenanceRequestInput,
   createMaintenanceRequestInputSchema,
   listMaintenanceRequestsInputSchema,
   maintenancePhotoUploadUrlInputSchema,
+  tenantUpdateMaintenanceRequestInputSchema,
 } from '@dorm/shared/zod';
-import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { CurrentTenant } from '../../common/decorators/current-tenant.decorator.js';
 import { TenantAuth } from '../../common/decorators/tenant-auth.decorator.js';
 import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
@@ -116,5 +118,26 @@ export class MeMaintenanceController {
     @CurrentTenant() tenant: TenantJwtClaims,
   ): Promise<MaintenanceRequest> {
     return this.service.createForTenant(body, tenant.sub);
+  }
+
+  /**
+   * Tenant self-update — narrow surface area:
+   *   { cancel: true }                  → cancel (only when status=open)
+   *   { description: "..." }            → edit description (open / in_progress)
+   *   { appendPhotoR2Keys: ["k1","k2"]} → APPEND photos (open / in_progress)
+   *
+   * Combinations:
+   *   - description + appendPhotoR2Keys → both applied in one call
+   *   - cancel + (description|appendPhotoR2Keys) → 400 (contradictory)
+   *
+   * Cross-tenant probes 404 via getByIdForTenant (NEVER 403).
+   */
+  @Patch(':id')
+  update(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @ZodBody(tenantUpdateMaintenanceRequestInputSchema) body: TenantUpdateMaintenanceRequestInput,
+    @CurrentTenant() tenant: TenantJwtClaims,
+  ): Promise<MaintenanceRequest> {
+    return this.service.updateForTenant(id, body, tenant.sub);
   }
 }

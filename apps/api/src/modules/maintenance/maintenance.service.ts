@@ -8,8 +8,10 @@ import type {
   MaintenancePhotoUploadUrlResponse,
   MaintenancePhotoViewUrlResponse,
   MaintenanceRequest,
+  TenantUpdateMaintenanceRequestInput,
   UpdateMaintenanceRequestInput,
 } from '@dorm/shared/zod';
+import { MAINTENANCE_PHOTO_MAX } from '@dorm/shared/zod';
 import {
   BadRequestException,
   ConflictException,
@@ -316,6 +318,144 @@ export class MaintenanceService {
     // ---- resolutionNote (standalone, e.g. amendment) ---------------
     if (input.resolutionNote !== undefined) {
       data.resolutionNote = input.resolutionNote;
+    }
+
+    const row = await prisma.maintenanceRequest.update({
+      where: { id },
+      data,
+    });
+    return row as unknown as MaintenanceRequest;
+  }
+
+  // ---------------------------------------------------------------
+  // Write paths — tenant self-update (Sprint B / Task #100)
+  // ---------------------------------------------------------------
+
+  /**
+   * Tenant self-update via LIFF — narrow surface area vs admin `update`:
+   *   - `cancel: true`         → status open ONLY (terminal cancel; admin
+   *                              cancellation flow is unaffected)
+   *   - `description`          → status in [open, in_progress] (after that,
+   *                              ticket is staff-owned + immutable to tenant)
+   *   - `appendPhotoR2Keys[]`  → status in [open, in_progress]; APPEND only,
+   *                              never replace; combined cap MAINTENANCE_PHOTO_MAX
+   *
+   * Defence-in-depth (mirrors `getByIdForTenant`):
+   *   - `tenantId` enforced via WHERE — cross-tenant probes 404 before any
+   *     state machine check (NEVER 403; no leak of "this id is real").
+   *   - Photo prefix re-validated for every appended key (a tampered key
+   *     targeting another tenant's namespace gets 400).
+   *   - R2 HEAD on every appended key (mirrors createForTenant) — silent
+   *     drops at the CDN edge surface as 400, not as a corrupt ticket row.
+   *
+   * Resolution-note semantics: tenant cancellation auto-fills
+   * `resolutionNote` with a fixed sentinel ("ผู้เช่ายกเลิกเอง") because:
+   *   1. The schema requires a non-empty resolutionNote on cancel (admin
+   *      contract — see `update` cross-field rule).
+   *   2. Tenant UI doesn't ask for a free-form reason (one less form field
+   *      at the cancel-dialog moment); admin can read the sentinel + ticket
+   *      timeline to infer intent if needed.
+   */
+  async updateForTenant(
+    id: string,
+    input: TenantUpdateMaintenanceRequestInput,
+    tenantId: string,
+  ): Promise<MaintenanceRequest> {
+    const ctx = getTenantContext();
+    if (!ctx?.companyId) {
+      throw new InternalServerErrorException('Tenant context missing on maintenance update');
+    }
+
+    const existing = await this.getByIdForTenant(id, tenantId);
+
+    // Build patch incrementally so per-field validation runs independently +
+    // each error message names the failing field.
+    const data: Prisma.MaintenanceRequestUpdateInput = {};
+
+    // ---- cancel ---------------------------------------------------------
+    if (input.cancel === true) {
+      // Tenant-initiated cancel only valid when ticket is still in `open`.
+      // Once staff picks it up (in_progress) → tenant must contact staff
+      // directly; staff handles cancel via admin endpoint.
+      if (existing.status !== 'open') {
+        throw new ConflictException({
+          error: 'TenantCancelNotAllowed',
+          message: `You can only cancel tickets in "open" status (current: "${existing.status}"). Contact staff to cancel an in-progress ticket.`,
+        });
+      }
+      data.status = 'cancelled';
+      // Sentinel reason — surfaces to admin / future timeline view.
+      data.resolutionNote = 'ผู้เช่ายกเลิกเอง';
+    }
+
+    // ---- description ----------------------------------------------------
+    if (input.description !== undefined) {
+      if (existing.status !== 'open' && existing.status !== 'in_progress') {
+        throw new ConflictException({
+          error: 'TenantEditNotAllowed',
+          message: `Cannot edit ticket in "${existing.status}" status — tenant edits are limited to open / in_progress tickets.`,
+        });
+      }
+      // Cancel + edit-description in the same call would be contradictory
+      // (we just set status=cancelled above). Reject to keep semantics clean.
+      if (input.cancel === true) {
+        throw new BadRequestException({
+          error: 'CancelAndEditConflict',
+          message: 'Cannot cancel and edit description in the same request',
+        });
+      }
+      data.description = input.description;
+    }
+
+    // ---- appendPhotoR2Keys ----------------------------------------------
+    if (input.appendPhotoR2Keys !== undefined && input.appendPhotoR2Keys.length > 0) {
+      if (existing.status !== 'open' && existing.status !== 'in_progress') {
+        throw new ConflictException({
+          error: 'TenantEditNotAllowed',
+          message: `Cannot add photos to ticket in "${existing.status}" status — tenant edits are limited to open / in_progress tickets.`,
+        });
+      }
+      if (input.cancel === true) {
+        throw new BadRequestException({
+          error: 'CancelAndEditConflict',
+          message: 'Cannot cancel and append photos in the same request',
+        });
+      }
+
+      // Combined cap — schema-level cap is per-array; we enforce the
+      // existing+appended total here (cross-field rule).
+      const combined = existing.photoR2Keys.length + input.appendPhotoR2Keys.length;
+      if (combined > MAINTENANCE_PHOTO_MAX) {
+        throw new BadRequestException({
+          error: 'TooManyPhotos',
+          message: `Total photos would be ${combined} — cap is ${MAINTENANCE_PHOTO_MAX}. Existing: ${existing.photoR2Keys.length}, attempting to add: ${input.appendPhotoR2Keys.length}.`,
+        });
+      }
+
+      // Same prefix + HEAD validation as createForTenant — defence in depth
+      // against a tampered echo from the client supplying a key from
+      // another tenant's namespace or a never-uploaded key.
+      const expectedPrefix = `companies/${ctx.companyId}/maintenance/${tenantId}/`;
+      for (const key of input.appendPhotoR2Keys) {
+        if (!key.startsWith(expectedPrefix)) {
+          throw new BadRequestException({
+            error: 'InvalidPhotoR2Key',
+            message: `Photo key does not match the expected prefix for this tenant: ${key}`,
+          });
+        }
+        const head = await this.storage.headObject(key);
+        if (!head) {
+          throw new BadRequestException({
+            error: 'PhotoNotUploaded',
+            message: `No R2 object found at ${key} — upload may have failed`,
+          });
+        }
+      }
+
+      // Append (not replace) — preserves the original chronological order
+      // of the report and lets admin see "tenant added 2 more photos
+      // 3h after filing" via createdAt vs updatedAt deltas.
+      data.photoR2Keys = [...existing.photoR2Keys, ...input.appendPhotoR2Keys];
     }
 
     const row = await prisma.maintenanceRequest.update({
