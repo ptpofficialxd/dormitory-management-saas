@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import fastifyCookie from '@fastify/cookie';
 import fastifyHelmet from '@fastify/helmet';
+import fastifyRateLimit from '@fastify/rate-limit';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
@@ -19,6 +20,26 @@ function shouldCaptureRawBody(url: string | undefined): boolean {
   if (!url) return false;
   return RAW_BODY_PATH_PREFIXES.some((p) => url.startsWith(p));
 }
+
+/**
+ * Per-route rate-limit overrides (Task #115). Public endpoints that take
+ * unauthenticated traffic need a tight cap so a single IP can't:
+ *   - signup: spam company creation (5/hr/IP — slug-takedown attack)
+ *   - check-slug: enumerate the slug namespace (60/hr/IP — 1/min average)
+ *
+ * Keys are upper-case `METHOD:url`. Values follow the @fastify/rate-limit
+ * route-config schema. Add an entry here to extend coverage; the `onRoute`
+ * hook below threads the config into Nest-registered routes.
+ *
+ * NOT covered (intentionally): /auth/login + /auth/refresh — they're
+ * already brute-force resistant via Argon2id (~60ms/attempt). Adding rate
+ * limit there would block legitimate users on shared NAT (offices, schools)
+ * more than it blocks attackers.
+ */
+const RATE_LIMITED_ROUTES: Readonly<Record<string, { max: number; timeWindow: string }>> = {
+  'POST:/auth/signup': { max: 5, timeWindow: '1 hour' },
+  'GET:/auth/check-slug': { max: 60, timeWindow: '1 hour' },
+};
 
 /**
  * Bootstrap entrypoint. Fastify is the adapter (ADR — performance, no body-
@@ -79,6 +100,49 @@ async function bootstrap(): Promise<void> {
         }
       },
     );
+
+  // ---------------------------------------------------------------------
+  // Rate limiting (Task #115).
+  //
+  // Registered on the raw Fastify instance BEFORE NestFactory.create so the
+  // `onRoute` hook below can intercept Nest-registered routes (Nest adds
+  // routes during `app.init()`, which fires inside `NestFactory.create`).
+  //
+  // `global: false` means no route is limited by default — opt-in only via
+  // the lookup table. Keeps blast radius narrow + makes the policy reviewable
+  // in one place.
+  //
+  // Error envelope matches our GlobalExceptionFilter shape so client code
+  // can treat 429 like any other API error (no special-case needed).
+  //
+  // Skipped entirely in `test` env — e2e tests pound /auth/signup +
+  // /auth/check-slug repeatedly, and a single shared IP (CI runner / inject
+  // localhost) would burn through the quota in a few runs. Rate-limit
+  // behaviour itself is a Phase 1 e2e concern (own dedicated test).
+  // ---------------------------------------------------------------------
+  if (env.NODE_ENV !== 'test') {
+    await adapter.getInstance().register(fastifyRateLimit, {
+      global: false,
+      errorResponseBuilder: (_req, ctx) => ({
+        statusCode: 429,
+        error: 'TooManyRequests',
+        message: `เรียก endpoint นี้บ่อยเกินไป — กรุณาลองใหม่ใน ${Math.max(1, Math.ceil(ctx.ttl / 1000))} วินาที`,
+      }),
+    });
+
+    // `onRoute` fires synchronously each time a route is registered. We
+    // mutate `routeOptions.config.rateLimit` to attach the per-route policy
+    // BEFORE Fastify finalises the route — equivalent to passing
+    // `{ config: { rateLimit: ... } }` at definition time.
+    adapter.getInstance().addHook('onRoute', (routeOptions) => {
+      const url = routeOptions.url ?? '';
+      const method = String(routeOptions.method ?? '').toUpperCase();
+      const limit = RATE_LIMITED_ROUTES[`${method}:${url}`];
+      if (limit) {
+        routeOptions.config = { ...(routeOptions.config ?? {}), rateLimit: limit };
+      }
+    });
+  }
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     // We registered our own JSON parser above; tell Nest to skip its
