@@ -161,7 +161,7 @@ function buildNavItems(slug: string): NavItem[] {
       label: 'ประกาศ',
       href: `${base}/announcements`,
       icon: Megaphone,
-      ready: false,
+      ready: true,
       requires: { action: 'read', resource: 'announcement' },
     },
     {

@@ -2,8 +2,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ApiError, api } from '@/lib/api';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
 import { type CompanyWire, companyWireSchema } from '@/queries/company';
+import {
+  type CompanyLineChannelPublicWire,
+  companyLineChannelPublicWireSchema,
+} from '@/queries/line-channel';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { LineChannelForm } from './_components/line-channel-form';
 import { SettingsForm } from './_components/settings-form';
 
 export const metadata: Metadata = {
@@ -33,8 +38,27 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
   }
 
   let company: CompanyWire;
+  let lineChannel: CompanyLineChannelPublicWire | null = null;
   try {
     company = await api.get(`/c/${companySlug}`, companyWireSchema, { token });
+    // LINE channel is optional — 404 = "not yet configured", any other
+    // error bubbles up to the outer catch.
+    try {
+      lineChannel = await api.get(
+        `/c/${companySlug}/line-channel`,
+        companyLineChannelPublicWireSchema,
+        { token },
+      );
+    } catch (lineErr) {
+      if (
+        lineErr instanceof ApiError &&
+        (lineErr.statusCode === 404 || lineErr.code === 'NotFoundException')
+      ) {
+        lineChannel = null; // unconfigured — render empty form
+      } else {
+        throw lineErr;
+      }
+    }
   } catch (err) {
     if (
       err instanceof ApiError &&
@@ -58,6 +82,9 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
   }
 
   const promptPayConfigured = Boolean(company.promptPayId && company.promptPayName);
+  const lineChannelConfigured = Boolean(
+    lineChannel?.hasChannelSecret && lineChannel?.hasChannelAccessToken,
+  );
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -89,6 +116,42 @@ export default async function SettingsPage({ params }: SettingsPageProps) {
             companySlug={companySlug}
             initialPromptPayId={company.promptPayId ?? ''}
             initialPromptPayName={company.promptPayName ?? ''}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">LINE Official Account</CardTitle>
+          <CardDescription>
+            ใช้สำหรับ push บิลใหม่ + ผลตรวจสลิป + ประกาศ ไปหาผู้เช่า — ตั้งค่าก่อนค่อยใช้ "ส่งประกาศ" / "ออกบิล"
+            (ไม่งั้นข้อความจะไปไม่ถึงผู้เช่า) ดูวิธีสร้าง LINE OA ใน{' '}
+            <a
+              href="https://developers.line.biz/console/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2"
+            >
+              LINE Developers Console
+            </a>
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!lineChannelConfigured ? (
+            <p
+              role="alert"
+              className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400"
+            >
+              ⚠️ ยังไม่ได้เชื่อม LINE OA — ระบบจะส่งประกาศ / push บิลให้ผู้เช่าไม่ได้
+            </p>
+          ) : null}
+          <LineChannelForm
+            companySlug={companySlug}
+            initialChannelId={lineChannel?.channelId ?? ''}
+            initialBasicId={lineChannel?.basicId ?? ''}
+            initialDisplayName={lineChannel?.displayName ?? ''}
+            hasChannelSecret={lineChannel?.hasChannelSecret ?? false}
+            hasChannelAccessToken={lineChannel?.hasChannelAccessToken ?? false}
           />
         </CardContent>
       </Card>
