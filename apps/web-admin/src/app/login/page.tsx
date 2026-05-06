@@ -7,6 +7,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { LoginForm } from './_components/login-form';
 
 export const metadata: Metadata = {
@@ -44,7 +45,13 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <CardContent>
           <LoginForm defaultCompanySlug={slug} next={safeNext} />
         </CardContent>
-        <CardFooter>
+        <CardFooter className="flex-col gap-2">
+          <p className="w-full text-center text-xs text-muted-foreground">
+            ยังไม่มีบัญชี?{' '}
+            <Link href="/signup" className="text-primary underline underline-offset-2">
+              สมัครหอใหม่
+            </Link>
+          </p>
           <p className="w-full text-center text-xs text-muted-foreground">
             หากลืมรหัสผ่าน กรุณาติดต่อแอดมินของบริษัท
           </p>

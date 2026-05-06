@@ -55,8 +55,9 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   /**
-   * Run on every page that needs auth. /login + Next internals are excluded
-   * via the negative-lookahead pattern — recommended Next 15 form.
+   * Run on every page that needs auth. /login, /signup + Next internals are
+   * excluded via the negative-lookahead pattern — recommended Next 15 form.
+   * (`signup` covers both `/signup` and `/signup/welcome` post-signup landing.)
    */
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|login|api/health).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|login|signup|api/health).*)'],
 };
