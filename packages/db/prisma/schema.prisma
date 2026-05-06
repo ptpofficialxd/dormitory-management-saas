@@ -183,6 +183,24 @@ enum MaintenanceCategory {
   @@map("maintenance_category")
 }
 
+// COM-003 (Task #105). State machine:
+//   draft     — pre-send (currently unused; reserved for Phase 1 scheduling)
+//   scheduled — Phase 1 only; v1 doesn't transition here
+//   sending   — workers fanned out, deliver/fail counters incrementing
+//   sent      — terminal: at least one delivery succeeded
+//   failed    — terminal: zero deliveries (all jobs hit permanent errors / no recipients)
+//   cancelled — admin aborted before send-out completed (Phase 1)
+enum AnnouncementStatus {
+  draft
+  scheduled
+  sending
+  sent
+  failed
+  cancelled
+
+  @@map("announcement_status")
+}
+
 // =========================================================================
 // Company — tenant root (every other tenant-owned row references this id)
 // =========================================================================
@@ -229,6 +247,7 @@ model Company {
   webhookEvents   WebhookEvent[]
   tenantInvites   TenantInvite[]
   maintenanceRequests MaintenanceRequest[]
+  announcements   Announcement[]
 
   @@index([status])
   @@map("company")
@@ -261,6 +280,10 @@ model User {
   // operator's "who did this work" admin view falls back to "unassigned"
   // if the user record is later removed (audit log keeps the snapshot).
   maintenanceAssigned MaintenanceRequest[] @relation("MaintenanceAssignee")
+  // COM-003 (Task #105): announcements this user composed. Restrict on
+  // delete so we don't lose the historical "who broadcast this" trail —
+  // mirrors RoleAssignment / TenantInvite issuer pattern.
+  createdAnnouncements Announcement[]      @relation("AnnouncementCreator")
 
   // Email uniqueness scoped to company — same email may register at multiple dorms.
   @@unique([companyId, email])
@@ -917,4 +940,52 @@ model MaintenanceRequest {
   @@index([assignedToUserId])
   @@index([unitId])
   @@map("maintenance_request")
+}
+
+// =========================================================================
+// Announcement — broadcast message from admin to all/segment of tenants.
+// COM-003 (Task #105). MVP v1: only audience='all' + sendNow are exercised
+// at the controller layer; the schema accepts the full target shape upfront
+// (JSONB) so Phase 1 can add property/floor/unit/tenant targeting without a
+// breaking migration. State machine + counter columns documented on
+// AnnouncementStatus enum above.
+// =========================================================================
+
+model Announcement {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId       String             @map("company_id") @db.Uuid
+  title           String             @db.VarChar(128)
+  body            String             @db.VarChar(4000)
+  // Discriminated target stored as JSONB. v1 only writes
+  // `{ "audience": "all" }`. Phase 1 will narrow to typed columns +
+  // partial indexes once the targeting UI lands (saves a migration now
+  // when we don't know the final query shape yet).
+  target          Json               @db.JsonB
+  status          AnnouncementStatus @default(draft)
+  // Phase 1 scheduling — null in v1.
+  scheduledAt     DateTime?          @map("scheduled_at") @db.Timestamptz(6)
+  // Set by the worker when the last fan-out job completes (success or
+  // permanent failure). NULL while status='sending' or earlier.
+  sentAt          DateTime?          @map("sent_at") @db.Timestamptz(6)
+  // Counters — updated by the worker via atomic `increment` after each
+  // per-tenant push attempt resolves. v1 admin sees these as read-only
+  // stats; Phase 1 will expose per-tenant detail rows in a separate
+  // delivery table if beta customers need it.
+  deliveredCount  Int                @default(0) @map("delivered_count")
+  failedCount     Int                @default(0) @map("failed_count")
+  createdByUserId String             @map("created_by_user_id") @db.Uuid
+  // Idempotency-Key from the POST header (CLAUDE.md §3.10). Same key
+  // within a company collapses to the same row — protects against
+  // double-tap on the "ส่งประกาศ" button + transient client retries.
+  idempotencyKey  String             @map("idempotency_key") @db.VarChar(128)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("AnnouncementCreator", fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, createdAt(sort: Desc)])
+  @@index([companyId, status])
+  @@map("announcement")
 }

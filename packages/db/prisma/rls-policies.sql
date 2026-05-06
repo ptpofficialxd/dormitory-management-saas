@@ -243,6 +243,21 @@ CREATE POLICY tenant_isolation ON maintenance_request
   USING (app_rls_bypass() OR company_id = app_current_company_id())
   WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
 
+-- ==== announcement =======================================================
+-- COM-003 / Task #105. Admin path runs inside withTenant({companyId}) for
+-- create + read. Worker path (LineNotificationProcessor) re-opens
+-- withTenant({ companyId }) from the job payload before incrementing the
+-- delivered/failed counters, so the worker's writes scope correctly. No
+-- tenant LIFF surface in v1 — push-only delivery; LIFF history page is
+-- deferred to Phase 1 per the COM-003 plan.
+ALTER TABLE announcement ENABLE ROW LEVEL SECURITY;
+ALTER TABLE announcement FORCE  ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation ON announcement;
+CREATE POLICY tenant_isolation ON announcement
+  USING (app_rls_bypass() OR company_id = app_current_company_id())
+  WITH CHECK (app_rls_bypass() OR company_id = app_current_company_id());
+
 -- -------------------------------------------------------------------------
 -- Append-only enforcement for audit_log (CLAUDE.md §3.7).
 -- UPDATE / DELETE are denied even by the bypass role.
