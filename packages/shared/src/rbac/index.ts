@@ -36,6 +36,11 @@ export const RESOURCES = [
   'tenant_user',
   'staff_user',
   'audit_log',
+  // Aggregated read-only view of company KPIs (revenue, arrears aging,
+  // occupancy). Not a real DB table — guards a virtual endpoint that joins
+  // existing tables. Only `read` is meaningful; declared so guards can use
+  // a single permission key instead of compositing four resource checks.
+  'dashboard',
 ] as const;
 export type Resource = (typeof RESOURCES)[number];
 
@@ -77,6 +82,7 @@ const COMPANY_OWNER = keys([
   'contract:delete',
   'contract:read',
   'contract:update',
+  'dashboard:read',
   'invoice:approve',
   'invoice:create',
   'invoice:delete',
@@ -135,6 +141,7 @@ const PROPERTY_MANAGER = keys([
   'contract:create',
   'contract:read',
   'contract:update',
+  'dashboard:read',
   'invoice:approve',
   'invoice:create',
   'invoice:read',
@@ -175,6 +182,7 @@ const PROPERTY_MANAGER = keys([
 const STAFF = keys([
   'announcement:read',
   'contract:read',
+  'dashboard:read',
   'invoice:read',
   'maintenance_ticket:create',
   'maintenance_ticket:read',

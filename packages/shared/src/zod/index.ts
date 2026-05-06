@@ -23,3 +23,4 @@ export * from './webhook-line.js';
 export * from './webhook-event.js';
 export * from './company-line-channel.js';
 export * from './tenant-invite.js';
+export * from './dashboard.js';
