@@ -9,6 +9,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
 import { TenantContextInterceptor } from './common/middleware/tenant-context.interceptor.js';
 import { QueueModule } from './common/queue/queue.module.js';
 import { AnnouncementModule } from './modules/announcement/announcement.module.js';
+import { AuditLogModule } from './modules/audit-log/audit-log.module.js';
 import { AuthModule } from './modules/auth/auth.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
@@ -72,6 +73,7 @@ import { UserModule } from './modules/user/user.module.js';
     UserModule,
     DashboardModule,
     AnnouncementModule,
+    AuditLogModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
