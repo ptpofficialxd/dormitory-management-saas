@@ -1,7 +1,19 @@
 import { prisma } from '@dorm/db';
 import { getTenantContext } from '@dorm/db';
-import type { AdminJwtClaims, Company, UpdatePromptPaySettingsInput } from '@dorm/shared/zod';
-import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import type { Plan } from '@dorm/shared';
+import { type Entitlements, computeEntitlements } from '@dorm/shared/billing';
+import type {
+  AdminJwtClaims,
+  Company,
+  MeResponse,
+  UpdatePromptPaySettingsInput,
+} from '@dorm/shared/zod';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 
 /**
  * Read + minimal-mutation company operations.
@@ -23,12 +35,26 @@ import { Injectable, InternalServerErrorException, NotFoundException } from '@ne
  */
 @Injectable()
 export class CompanyService {
+  private readonly logger = new Logger(CompanyService.name);
+
+  /** Threshold for surfacing the "trial ending soon" banner + audit warn. */
+  private static readonly TRIAL_WARN_DAYS_THRESHOLD = 7;
+  /** Idempotency window for `trial.warning` audit emit — gate to once / 24h. */
+  private static readonly TRIAL_WARN_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
   /**
-   * `GET /me` payload — current user's profile + their company, with the
-   * role list embedded from the JWT claims so the frontend can render the
-   * nav without an extra round-trip.
+   * `GET /me` payload — current user's profile + their company + computed
+   * entitlements (Task #118). Drives the SPA's nav state, trial banner, and
+   * plan badge in one round-trip on app load.
+   *
+   * Entitlements are derived from `Company.plan` + `Company.trialEndsAt`
+   * via the pure `computeEntitlements` helper in `@dorm/shared/billing`.
+   * The DB columns came in Task #111 — `plan` defaults to `'free'`, and
+   * `trialEndsAt` is set at signup time (now + 14 days) for new companies.
+   * Legacy seeded companies with `trialEndsAt=null` get a no-trial entitlements
+   * snapshot (the UI renders no countdown banner in that case).
    */
-  async getMe(claims: AdminJwtClaims) {
+  async getMe(claims: AdminJwtClaims): Promise<MeResponse> {
     const [company, user] = await Promise.all([
       prisma.company.findUnique({
         where: { id: claims.companyId },
@@ -37,6 +63,8 @@ export class CompanyService {
           slug: true,
           name: true,
           status: true,
+          plan: true,
+          trialEndsAt: true,
         },
       }),
       prisma.user.findUnique({
@@ -58,11 +86,97 @@ export class CompanyService {
       throw new NotFoundException('Profile not found');
     }
 
+    // `plan` is nullable in Prisma (defaults via @default(free) at DB level
+    // for new rows; legacy rows pre-Task-#111 may be null until backfill ran).
+    // Treat null as 'free' defensively so the UI never sees an undefined tier.
+    const plan: Plan = (company.plan ?? 'free') as Plan;
+    const entitlements = computeEntitlements(plan, company.trialEndsAt);
+
+    // Fire-and-forget — don't block /me on the audit write. A failure here
+    // means the banner still shows (entitlements is computed locally) but
+    // the audit trail misses one warning row, which is acceptable.
+    void this.maybeEmitTrialWarning(claims.companyId, entitlements);
+
     return {
-      company,
-      user,
+      company: {
+        id: company.id,
+        slug: company.slug,
+        name: company.name,
+        status: company.status,
+      },
+      user: {
+        id: user.id,
+        email: user.email,
+        displayName: user.displayName,
+        status: user.status,
+        lastLoginAt: user.lastLoginAt ? user.lastLoginAt.toISOString() : null,
+      },
       roles: claims.roles,
+      entitlements,
     };
+  }
+
+  /**
+   * Emit a `trial.warning` audit row when the company's trial is within
+   * `TRIAL_WARN_DAYS_THRESHOLD` days of ending — but no more than once per
+   * 24 hours per company (so /me being polled every page load doesn't spam
+   * the audit log).
+   *
+   * Idempotency strategy: read-then-write (NOT transactional). A lost race
+   * could insert two rows; we accept that — audit log is append-only and
+   * "warning emitted twice" is harmless. The proper fix is a unique index
+   * on `(companyId, action, date_trunc('day', createdAt))` but Phase 1 will
+   * add that when SAAS-004 lands.
+   *
+   * Skipped silently for:
+   *   - Companies not in trial (legacy rows w/ null trialEndsAt, or paid plans)
+   *   - Trials with >7 days remaining (banner not shown, no need to log)
+   *   - Already-expired trials (too late to warn — Phase 1 will emit
+   *     `trial.expired` separately)
+   */
+  private async maybeEmitTrialWarning(
+    companyId: string,
+    entitlements: Entitlements,
+  ): Promise<void> {
+    if (!entitlements.inTrial) return;
+    if (entitlements.trialDaysRemaining === null) return;
+    if (entitlements.trialDaysRemaining > CompanyService.TRIAL_WARN_DAYS_THRESHOLD) return;
+
+    try {
+      const since = new Date(Date.now() - CompanyService.TRIAL_WARN_DEDUP_WINDOW_MS);
+      const recent = await prisma.auditLog.findFirst({
+        where: {
+          companyId,
+          action: 'trial.warning',
+          resource: 'company',
+          resourceId: companyId,
+          createdAt: { gte: since },
+        },
+        select: { id: true },
+      });
+      if (recent) return;
+
+      await prisma.auditLog.create({
+        data: {
+          companyId,
+          // System-emitted (not user-initiated) — null actor matches the
+          // signup audit pattern. UserId tracking via metadata if needed later.
+          actorUserId: null,
+          action: 'trial.warning',
+          resource: 'company',
+          resourceId: companyId,
+          metadata: {
+            plan: entitlements.plan,
+            trialDaysRemaining: entitlements.trialDaysRemaining,
+            trialEndsAt: entitlements.trialEndsAt,
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[trial.warning] emit failed for company=${companyId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**

@@ -35,6 +35,7 @@ import {
   maintenanceCategorySchema,
   maintenancePrioritySchema,
   maintenanceStatusSchema,
+  meResponseSchema,
   meterKindSchema,
   meterValueSchema,
   moneySchema,
@@ -1513,6 +1514,195 @@ describe('listPaymentsQuerySchema', () => {
 
   it('rejects limit > 100 (DoS guard)', () => {
     expect(listPaymentsQuerySchema.safeParse({ limit: 200 }).success).toBe(false);
+  });
+});
+
+// =========================================================================
+// SAAS-001..003 — meResponseSchema (Task #118)
+// =========================================================================
+
+describe('meResponseSchema', () => {
+  const validMe = {
+    company: {
+      id: UUID_A,
+      slug: 'acme-dorm',
+      name: 'Acme Dorm',
+      status: 'active' as const,
+    },
+    user: {
+      id: UUID_B,
+      email: 'owner@acme.test',
+      displayName: 'Acme Owner',
+      status: 'active' as const,
+      lastLoginAt: '2026-05-06T10:00:00.000Z',
+    },
+    roles: ['company_owner' as const],
+    entitlements: {
+      plan: 'free' as const,
+      limits: {
+        properties: 1,
+        units: 10,
+        linePush: false,
+        broadcast: false,
+        auditRetentionDays: 7,
+      },
+      inTrial: true,
+      trialExpired: false,
+      trialDaysRemaining: 14,
+      trialEndsAt: '2026-05-20T10:00:00.000Z',
+    },
+  };
+
+  it('accepts a fully-valid /me payload', () => {
+    expect(meResponseSchema.safeParse(validMe).success).toBe(true);
+  });
+
+  it('accepts null lastLoginAt (user never logged in — defensive)', () => {
+    expect(
+      meResponseSchema.safeParse({ ...validMe, user: { ...validMe.user, lastLoginAt: null } })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects empty roles array', () => {
+    expect(meResponseSchema.safeParse({ ...validMe, roles: [] }).success).toBe(false);
+  });
+
+  it('rejects unknown role', () => {
+    expect(
+      meResponseSchema.safeParse({ ...validMe, roles: ['super_admin' as never] }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unknown company status', () => {
+    expect(
+      meResponseSchema.safeParse({
+        ...validMe,
+        company: { ...validMe.company, status: 'frozen' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects when entitlements is missing', () => {
+    const { entitlements: _omit, ...rest } = validMe;
+    expect(meResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts a non-trial paid plan (no countdown)', () => {
+    const paid = {
+      ...validMe,
+      entitlements: {
+        plan: 'pro' as const,
+        limits: {
+          properties: 10,
+          units: 200,
+          linePush: true,
+          broadcast: true,
+          auditRetentionDays: 90,
+        },
+        inTrial: false,
+        trialExpired: false,
+        trialDaysRemaining: null,
+        trialEndsAt: null,
+      },
+    };
+    expect(meResponseSchema.safeParse(paid).success).toBe(true);
+  });
+});
+
+// Silence "unused" — UUID_C now referenced in auditLog tests.
+void UUID_C;
+
+// =========================================================================
+// SAAS-001..003 — meResponseSchema (Task #118)
+// =========================================================================
+
+describe('meResponseSchema', () => {
+  const validMe = {
+    company: {
+      id: UUID_A,
+      slug: 'acme-dorm',
+      name: 'Acme Dorm',
+      status: 'active' as const,
+    },
+    user: {
+      id: UUID_B,
+      email: 'owner@acme.test',
+      displayName: 'Acme Owner',
+      status: 'active' as const,
+      lastLoginAt: '2026-05-06T10:00:00.000Z',
+    },
+    roles: ['company_owner' as const],
+    entitlements: {
+      plan: 'free' as const,
+      limits: {
+        properties: 1,
+        units: 10,
+        linePush: false,
+        broadcast: false,
+        auditRetentionDays: 7,
+      },
+      inTrial: true,
+      trialExpired: false,
+      trialDaysRemaining: 14,
+      trialEndsAt: '2026-05-20T10:00:00.000Z',
+    },
+  };
+
+  it('accepts a fully-valid /me payload', () => {
+    expect(meResponseSchema.safeParse(validMe).success).toBe(true);
+  });
+
+  it('accepts null lastLoginAt (user never logged in — defensive)', () => {
+    expect(
+      meResponseSchema.safeParse({ ...validMe, user: { ...validMe.user, lastLoginAt: null } })
+        .success,
+    ).toBe(true);
+  });
+
+  it('rejects empty roles array', () => {
+    expect(meResponseSchema.safeParse({ ...validMe, roles: [] }).success).toBe(false);
+  });
+
+  it('rejects unknown role', () => {
+    expect(
+      meResponseSchema.safeParse({ ...validMe, roles: ['super_admin' as never] }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unknown company status', () => {
+    expect(
+      meResponseSchema.safeParse({
+        ...validMe,
+        company: { ...validMe.company, status: 'frozen' },
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects when entitlements is missing', () => {
+    const { entitlements: _omit, ...rest } = validMe;
+    expect(meResponseSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('accepts a non-trial paid plan (no countdown)', () => {
+    const paid = {
+      ...validMe,
+      entitlements: {
+        plan: 'pro' as const,
+        limits: {
+          properties: 10,
+          units: 200,
+          linePush: true,
+          broadcast: true,
+          auditRetentionDays: 90,
+        },
+        inTrial: false,
+        trialExpired: false,
+        trialDaysRemaining: null,
+        trialEndsAt: null,
+      },
+    };
+    expect(meResponseSchema.safeParse(paid).success).toBe(true);
   });
 });
 

@@ -1,6 +1,7 @@
 import {
   type AdminJwtClaims,
   type Company,
+  type MeResponse,
   type UpdatePromptPaySettingsInput,
   updatePromptPaySettingsInputSchema,
 } from '@dorm/shared/zod';
@@ -27,7 +28,7 @@ export class CompanyController {
   constructor(private readonly companyService: CompanyService) {}
 
   @Get('me')
-  me(@CurrentUser() user: AdminJwtClaims) {
+  me(@CurrentUser() user: AdminJwtClaims): Promise<MeResponse> {
     return this.companyService.getMe(user);
   }
 
