@@ -46,8 +46,9 @@
     "shared:typecheck": "bun run --filter @dorm/shared typecheck",
     "check:bun-api": "node ./scripts/check-no-bun-api.mjs",
     "check:roles": "node ./scripts/check-no-hardcoded-roles.mjs",
+    "check:audit-immutable": "node ./scripts/check-no-audit-mutation.mjs",
     "e2e:invite": "node ./scripts/e2e-create-invite.mjs",
-    "verify": "bun run lint && bun run check:bun-api && bun run check:roles && bun run typecheck && bun run build && bun run shared:test && bun run --cwd apps/api test",
+    "verify": "bun run lint && bun run check:bun-api && bun run check:roles && bun run check:audit-immutable && bun run typecheck && bun run build && bun run shared:test && bun run --cwd apps/api test",
     "verify:full": "bun run verify && bun run db:reset:test && bun run db:test && bun run --cwd apps/api test:e2e",
     "prepare": "echo 'skip husky for now'"
   },

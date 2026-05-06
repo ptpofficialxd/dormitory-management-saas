@@ -27,6 +27,19 @@ enum CompanyStatus {
   @@map("company_status")
 }
 
+// AUTH-004 (Task #111). Subscription tier — placeholder until SAAS-001..003
+// wires up billing + entitlements. Today every signup gets `free` and the
+// backend doesn't gate features by plan; we add the column now so we don't
+// have to re-migrate when SAAS-001 ships. Order is roughly low → high tier.
+enum Plan {
+  free
+  starter
+  pro
+  business
+
+  @@map("plan")
+}
+
 enum UserStatus {
   active
   disabled
@@ -223,6 +236,14 @@ model Company {
   // PromptPay spec caps at 25 ASCII chars; we keep 64 to absorb escaping
   // headroom and truncate/sanitize at the QR-generation boundary.
   promptPayName String?       @map("prompt_pay_name") @db.VarChar(64)
+  // AUTH-004 (Task #111). Trial + plan are SAAS placeholder columns. Backend
+  // doesn't enforce them yet — SAAS-001..003 will add billing guards. Default
+  // for new signups: trialEndsAt = createdAt + 14 days, plan = 'free'.
+  // Existing seeded companies get backfilled by the migration (see comment in
+  // migration.sql) so the columns are always non-null in practice; we keep
+  // them nullable in Prisma to keep the SAAS migration easy to revert/iterate.
+  trialEndsAt   DateTime?     @map("trial_ends_at") @db.Timestamptz(6)
+  plan          Plan?         @default(free)
   createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -265,6 +286,12 @@ model User {
   passwordHash String     @map("password_hash") @db.VarChar(255)
   displayName  String     @map("display_name") @db.VarChar(128)
   status       UserStatus @default(active)
+  // AUTH-004 (Task #111). Email verification placeholder — signup flow leaves
+  // this null in v1 (no email infra yet). Phase 1 adds Resend + magic-link
+  // verification that backfills via /auth/verify-email. Backend doesn't gate
+  // login on emailVerifiedAt yet; we add the column now so Phase 1 doesn't
+  // require a second migration.
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
   lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(6)
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -381,7 +408,12 @@ model AuditLog {
   userAgent   String?  @map("user_agent") @db.VarChar(512)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  // Cascade on company delete (Task #116) — DB-level append-only triggers
+  // were dropped in migration 20260506110000. Append-only is now enforced
+  // at the application layer (see CLAUDE.md §3.7 + scripts/check-no-audit-
+  // mutation.mjs lint check). Cascade lets `bun run db:reset`, GDPR erasure,
+  // and Prisma Studio deletes work without a superuser session.
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   actor   User?   @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([companyId, createdAt(sort: Desc)])

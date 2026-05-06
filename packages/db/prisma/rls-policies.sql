@@ -260,26 +260,21 @@ CREATE POLICY tenant_isolation ON announcement
 
 -- -------------------------------------------------------------------------
 -- Append-only enforcement for audit_log (CLAUDE.md §3.7).
--- UPDATE / DELETE are denied even by the bypass role.
--- TRUNCATE is still possible via SUPERUSER (intentional — DB-level ops).
+--
+-- DB-level triggers were REMOVED in migration 20260506110000 to let
+-- Prisma Studio + GDPR erasure scripts delete Company/User rows without
+-- requiring superuser + session_replication_role. Append-only is now
+-- enforced at the APPLICATION layer:
+--   • Service code MUST NOT issue prisma.auditLog.update*/delete*.
+--   • Lint check `scripts/check-no-audit-mutation.mjs` runs in CI/verify
+--     and fails the build on regressions.
+--
+-- We still drop any triggers + function the legacy migration left behind,
+-- so an apply-rls run on a freshly-migrated DB ends up consistent with a
+-- DB that ran the new migration.
 -- -------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION audit_log_deny_mutation() RETURNS trigger
-LANGUAGE plpgsql AS
-$$
-BEGIN
-  RAISE EXCEPTION 'audit_log is append-only: % is not permitted', TG_OP
-    USING ERRCODE = 'insufficient_privilege';
-END;
-$$;
-
 DROP TRIGGER IF EXISTS audit_log_no_update ON audit_log;
-CREATE TRIGGER audit_log_no_update
-  BEFORE UPDATE ON audit_log
-  FOR EACH ROW EXECUTE FUNCTION audit_log_deny_mutation();
-
 DROP TRIGGER IF EXISTS audit_log_no_delete ON audit_log;
-CREATE TRIGGER audit_log_no_delete
-  BEFORE DELETE ON audit_log
-  FOR EACH ROW EXECUTE FUNCTION audit_log_deny_mutation();
+DROP FUNCTION IF EXISTS audit_log_deny_mutation();
 
 COMMIT;

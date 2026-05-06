@@ -68,7 +68,7 @@ team members don't need to coordinate Bun versions.
 4. **Time: store UTC, display `Asia/Bangkok`.** Use `date-fns-tz`.
 5. **Path-based routing `/c/{companySlug}/...`** — no subdomains in MVP.
 6. **LIFF is mobile-first (≥375px). Admin Web is responsive (≥375px).**
-7. **Audit log is append-only** and required on every mutation touching PII or money.
+7. **Audit log is append-only** (required on every mutation touching PII or money). Service code MUST NOT call `prisma.auditLog.update*` / `delete*` / `upsert` — only test files (`*.test.ts`, `*.e2e-test.ts`) may, for cleanup. Enforced by `scripts/check-no-audit-mutation.mjs` in the `verify` pipeline. DB-level triggers were dropped in migration `20260506110000` so Prisma Studio + GDPR erasure can cascade-delete a Company; the contract now lives in code review + lint.
 8. **PII at rest is encrypted** (`national_id`, `phone`, `bank_account`) via pgcrypto.
 9. **ID card images** go to R2 **private** bucket + signed URL TTL ≤ 5 minutes.
 10. **Idempotency** on: LINE webhook, slip upload, payment confirm. Use `Idempotency-Key`
