@@ -34,7 +34,7 @@ Target: ship a real working MVP for **one real dormitory (~40 rooms)** in **1 mo
 | Auth               | Admin: JWT + email/password. Tenant: LINE Login (LIFF).                       |
 | Validation         | Zod (shared schemas in `packages/shared`)                                     |
 | Lint/Format        | Biome (single tool, replaces ESLint + Prettier)                               |
-| Test               | Vitest (unit + integration) — **not `bun test`** (portability)                |
+| Test               | Vitest (unit + integration) — **not `bun test`** (portability). Hosted under Node via `scripts/vitest.mjs` wrapper, see ⚠ below |
 | CI                 | GitHub Actions + `oven-sh/setup-bun@v2`                                       |
 
 **Forbidden without ADR:** swapping Prisma, swapping NestJS, adding GraphQL,
@@ -44,6 +44,18 @@ adding a second language runtime, adding Kubernetes, swapping Bun → Node.
 Bun and Node. No `Bun.*` globals in `apps/**` or `packages/**`. Wrap any
 runtime-specific API behind an adapter with a Node fallback. Use Node built-ins
 (`node:crypto`, `node:fs/promises`, `node:path`) — not `Bun.file` / `Bun.password`.
+
+**⚠ Vitest under Node (not Bun):** Bun 1.3.x cannot host vitest workers
+(`port.addListener` missing on its `node:worker_threads` MessagePort polyfill;
+both `pool: 'threads'` and `pool: 'forks'` fail because Bun's `child_process.fork`
+spawns Bun, not Node). Bun 1.3.x ALSO auto-substitutes `node` → `bun` in
+package.json script commands, defeating naive workarounds. All test scripts
+(`packages/shared`, `packages/db`, `apps/api`) route through `scripts/vitest.mjs`
+— a Node wrapper that detects Bun runtime, locates a real Node binary in PATH,
+and re-execs itself there. Don't write `vitest --run` directly in package.json
+test scripts; always use `node ../../scripts/vitest.mjs --run`. The wrapper
+works on both Bun 1.1.x (`packageManager` pin) and 1.3.x (latest installs), so
+team members don't need to coordinate Bun versions.
 
 ---
 

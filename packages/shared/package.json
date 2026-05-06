@@ -59,8 +59,8 @@
     "clean": "rm -rf dist .turbo tsconfig.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "test": "vitest --run",
-    "test:watch": "vitest"
+    "test": "node ../../scripts/vitest.mjs --run",
+    "test:watch": "node ../../scripts/vitest.mjs"
   },
   "dependencies": {
     "date-fns": "4.1.0",

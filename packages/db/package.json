@@ -38,8 +38,8 @@
     "clean": "rm -rf dist .turbo tsconfig.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "test": "dotenv -e ../../.env.test -- vitest --run",
-    "test:watch": "dotenv -e ../../.env.test -- vitest"
+    "test": "dotenv -e ../../.env.test -- node ../../scripts/vitest.mjs --run",
+    "test:watch": "dotenv -e ../../.env.test -- node ../../scripts/vitest.mjs"
   },
   "dependencies": {
     "@node-rs/argon2": "2.0.2",
