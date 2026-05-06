@@ -12,6 +12,7 @@ import { AuthModule } from './modules/auth/auth.module.js';
 import { BillingModule } from './modules/billing/billing.module.js';
 import { CompanyModule } from './modules/company/company.module.js';
 import { ContractModule } from './modules/contract/contract.module.js';
+import { DashboardModule } from './modules/dashboard/dashboard.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { LineModule } from './modules/line/line.module.js';
 import { MaintenanceModule } from './modules/maintenance/maintenance.module.js';
@@ -68,6 +69,7 @@ import { UserModule } from './modules/user/user.module.js';
     NotificationModule,
     MaintenanceModule,
     UserModule,
+    DashboardModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
