@@ -89,6 +89,11 @@ export type AnnouncementTarget = z.infer<typeof announcementTargetSchema>;
  * Full persisted row. `target` is stored as JSONB alongside the scalar
  * audience + optional propertyId column for efficient filtering — the Zod
  * schema presents the discriminated-union shape to callers.
+ *
+ * Date fields use `z.date()` (Date object) — same convention as Contract /
+ * Invoice / etc. across the repo. JSON serialisation auto-converts to ISO
+ * string on the wire; the web-admin re-parses via `z.coerce.date()` in
+ * `queries/announcements.ts`. Service-layer code stays typed with Date.
  */
 export const announcementSchema = z.object({
   id: uuidSchema,
@@ -102,16 +107,16 @@ export const announcementSchema = z.object({
   target: announcementTargetSchema,
   status: announcementStatusSchema,
   /** Null means "send immediately when status flips to `sending`". */
-  scheduledAt: isoUtcSchema.nullable(),
-  sentAt: isoUtcSchema.nullable(),
+  scheduledAt: z.date().nullable(),
+  sentAt: z.date().nullable(),
   /** Number of LINE push calls that returned 200 on the last delivery run. */
   deliveredCount: z.number().int().min(0),
   /** Number of LINE push calls that failed permanently (after retries). */
   failedCount: z.number().int().min(0),
   /** `User.id` — author of the announcement. */
   createdByUserId: uuidSchema,
-  createdAt: isoUtcSchema,
-  updatedAt: isoUtcSchema,
+  createdAt: z.date(),
+  updatedAt: z.date(),
 });
 export type Announcement = z.infer<typeof announcementSchema>;
 
