@@ -33,6 +33,11 @@
       "import": "./dist/rbac/index.js",
       "default": "./dist/rbac/index.js"
     },
+    "./billing": {
+      "types": "./dist/billing/index.d.ts",
+      "import": "./dist/billing/index.js",
+      "default": "./dist/billing/index.js"
+    },
     "./promptpay": {
       "types": "./dist/promptpay.d.ts",
       "import": "./dist/promptpay.js",

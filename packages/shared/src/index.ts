@@ -16,4 +16,5 @@ export * as date from './date.js';
 export * as slug from './slug.js';
 export * as promptpay from './promptpay.js';
 export * as rbac from './rbac/index.js';
+export * as billing from './billing/index.js';
 export * as zod from './zod/index.js';

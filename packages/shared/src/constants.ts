@@ -39,6 +39,18 @@ export const ROLES = ['company_owner', 'property_manager', 'staff', 'tenant', 'g
 export type Role = (typeof ROLES)[number];
 
 /**
+ * Subscription tier — matches Postgres enum `plan` (added Task #111).
+ * Order is intentional: low → high entitlement. Phase 1 will gate features
+ * via `packages/shared/billing/plan-limits.ts`.
+ *
+ * Duplicated here (not imported from Prisma) so `@dorm/shared` stays
+ * Prisma-free and ships to the browser. If you add a tier, update the
+ * Prisma enum + re-run migrate + update PLAN_LIMITS in billing/plan-limits.ts.
+ */
+export const PLANS = ['free', 'starter', 'pro', 'business'] as const;
+export type Plan = (typeof PLANS)[number];
+
+/**
  * Billing period format — `YYYY-MM` (ISO 8601 calendar month).
  * All invoices, meter readings, and ledger entries use this string.
  */
