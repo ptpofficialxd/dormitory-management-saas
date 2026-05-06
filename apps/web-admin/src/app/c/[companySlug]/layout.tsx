@@ -1,10 +1,13 @@
 import { AdminShell } from '@/components/shell/admin-shell';
+import { ApiError, api } from '@/lib/api';
 import { verifyAdminAccessToken } from '@/lib/auth';
 import { getAccessTokenFromCookie } from '@/lib/cookies';
 import { RbacProvider } from '@/lib/rbac';
+import { type MeResponse, meResponseSchema } from '@dorm/shared/zod';
 import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { LogoutButton } from './_components/logout-button';
+import { TrialBanner } from './_components/trial-banner';
 
 /**
  * Authenticated app shell — wraps every page under `/c/[companySlug]/*`.
@@ -45,9 +48,33 @@ export default async function CompanyLayout({
     redirect(`/c/${claims.companySlug}/dashboard`);
   }
 
+  // Fetch /me to drive the trial banner + plan badge. Failures degrade
+  // gracefully — if /me is down the user still sees pages, just without
+  // the trial-state chrome. Ship-level resilience > shell perfection.
+  let me: MeResponse | null = null;
+  try {
+    me = await api.get(`/c/${companySlug}/me`, meResponseSchema, { token: token ?? undefined });
+  } catch (err) {
+    // 401 = stale cookie; force re-login. Anything else: log + render
+    // the shell without entitlements rather than blocking page rendering.
+    if (
+      err instanceof ApiError &&
+      (err.statusCode === 401 || err.code === 'UnauthorizedException')
+    ) {
+      redirect(`/login?next=/c/${companySlug}`);
+    }
+    console.error('[layout/c] /me fetch failed (non-blocking):', err);
+  }
+
   return (
     <RbacProvider roles={claims.roles}>
-      <AdminShell companySlug={companySlug} email={claims.email} logoutSlot={<LogoutButton />}>
+      <AdminShell
+        companySlug={companySlug}
+        email={claims.email}
+        plan={me?.entitlements.plan ?? null}
+        logoutSlot={<LogoutButton />}
+        trialBannerSlot={me ? <TrialBanner entitlements={me.entitlements} /> : null}
+      >
         {children}
       </AdminShell>
     </RbacProvider>

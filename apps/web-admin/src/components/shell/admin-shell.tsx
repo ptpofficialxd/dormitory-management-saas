@@ -2,10 +2,13 @@
 
 import { useRole } from '@/lib/rbac';
 import { cn } from '@/lib/utils';
+import type { Plan } from '@dorm/shared';
+import { planDisplayName } from '@dorm/shared/billing';
 import type { Action, Resource } from '@dorm/shared/rbac';
 import {
   Building2,
   ChevronRight,
+  ClipboardList,
   DoorOpen,
   FileText,
   Gauge,
@@ -166,6 +169,16 @@ function buildNavItems(slug: string): NavItem[] {
     },
     {
       kind: 'leaf',
+      label: 'บันทึกกิจกรรม',
+      href: `${base}/audit-log`,
+      icon: ClipboardList,
+      ready: true,
+      // owner + property_manager only — matches the API-level
+      // @Perm('read', 'audit_log') in audit-log.controller.ts.
+      requires: { action: 'read', resource: 'audit_log' },
+    },
+    {
+      kind: 'leaf',
       label: 'ตั้งค่า',
       href: `${base}/settings`,
       icon: Settings,
@@ -190,6 +203,7 @@ const BREADCRUMB_LABELS: Record<string, string> = {
   payments: 'การชำระเงิน',
   maintenance: 'แจ้งซ่อม',
   announcements: 'ประกาศ',
+  'audit-log': 'บันทึกกิจกรรม',
   settings: 'ตั้งค่า',
 };
 
@@ -197,15 +211,33 @@ export interface AdminShellProps {
   companySlug: string;
   email: string;
   /**
+   * Active subscription tier — drives the badge in the topbar. Null when the
+   * /me fetch in the Server layout failed (degrade gracefully — no badge).
+   */
+  plan: Plan | null;
+  /**
    * `<LogoutButton />` rendered in the Server layout and passed in. Accepted
    * as ReactNode (not the component itself) so AdminShell stays a pure
    * Client Component — Server Components can't be imported, only handed in.
    */
   logoutSlot: ReactNode;
+  /**
+   * Optional `<TrialBanner />` (Server Component) rendered above page content.
+   * Server layout handles the entitlements fetch + null-render decision; we
+   * just slot whatever they pass in.
+   */
+  trialBannerSlot?: ReactNode;
   children: ReactNode;
 }
 
-export function AdminShell({ companySlug, email, logoutSlot, children }: AdminShellProps) {
+export function AdminShell({
+  companySlug,
+  email,
+  plan,
+  logoutSlot,
+  trialBannerSlot,
+  children,
+}: AdminShellProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { can } = useRole();
@@ -300,6 +332,7 @@ export function AdminShell({ companySlug, email, logoutSlot, children }: AdminSh
             <Breadcrumb companySlug={companySlug} segments={segments} />
           </div>
           <div className="flex items-center gap-2">
+            {plan ? <PlanBadge plan={plan} /> : null}
             <span
               className="hidden max-w-[160px] truncate text-xs text-muted-foreground sm:inline"
               title={email}
@@ -310,7 +343,10 @@ export function AdminShell({ companySlug, email, logoutSlot, children }: AdminSh
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 md:p-6">
+          {trialBannerSlot ? <div className="mb-4">{trialBannerSlot}</div> : null}
+          {children}
+        </main>
       </div>
     </div>
   );
@@ -450,5 +486,30 @@ function Breadcrumb({ companySlug, segments }: { companySlug: string; segments: 
         </span>
       ))}
     </nav>
+  );
+}
+
+/**
+ * Plan badge — small chip in the topbar showing the company's active tier
+ * (Task #121). Free tier renders muted; paid tiers render with a tinted
+ * background so the upgrade-state is visible at a glance.
+ *
+ * Click target is intentionally non-interactive in v1 — Phase 1 (SAAS-004)
+ * will link to a settings/billing page once Stripe wires up.
+ */
+function PlanBadge({ plan }: { plan: Plan }) {
+  const isFree = plan === 'free';
+  return (
+    <span
+      title={`แผนปัจจุบัน: ${planDisplayName(plan)}`}
+      className={cn(
+        'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide',
+        isFree
+          ? 'border-muted-foreground/30 bg-muted text-muted-foreground'
+          : 'border-primary/30 bg-primary/10 text-primary',
+      )}
+    >
+      {planDisplayName(plan)}
+    </span>
   );
 }
