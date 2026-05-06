@@ -1,15 +1,21 @@
-import { prisma, verifyPassword, withTenant } from '@dorm/db';
+import { hashPassword, prisma, verifyPassword, withTenant } from '@dorm/db';
 import type { Role } from '@dorm/shared';
+import { validateSlug } from '@dorm/shared/slug';
 import type {
   AdminJwtClaims,
   AuthTokens,
+  CheckSlugResponse,
   LoginAdminInput,
   LoginLiffInput,
   LoginLiffResponse,
   RefreshTokenInput,
+  SignupInput,
+  SignupResponse,
   TenantAuthToken,
 } from '@dorm/shared/zod';
 import {
+  BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -170,6 +176,217 @@ export class AuthService {
    */
   async logout(_claims: AdminJwtClaims): Promise<void> {
     // Intentional no-op for MVP.
+  }
+
+  // -----------------------------------------------------------------------
+  // AUTH-004 self-signup (Task #113)
+  // -----------------------------------------------------------------------
+
+  /** Trial length granted to every fresh signup. SAAS-001..003 will own this. */
+  private static readonly TRIAL_DAYS = 14;
+
+  /**
+   * Check whether a slug is available for a NEW company. Decision tree:
+   *   1. Run shape + reserved-word validation locally (no DB hit).
+   *   2. If shape OK → query company.slug uniqueness via the RLS-bypass path
+   *      (same posture as `lookupCompanyBySlug` — narrow `select { id }`).
+   *
+   * The endpoint is PUBLIC + idempotent — used by the signup form to give
+   * instant feedback as the admin types. Rate-limit (Task #115) sits in front.
+   */
+  async checkSlugAvailability(slug: string): Promise<CheckSlugResponse> {
+    const shape = validateSlug(slug);
+    if (!shape.ok) {
+      return { available: false, reason: shape.error };
+    }
+    const existing = await withTenant({ companyId: '', bypassRls: true }, () =>
+      prisma.company.findUnique({
+        where: { slug: shape.value },
+        select: { id: true },
+      }),
+    );
+    return existing ? { available: false, reason: 'taken' } : { available: true };
+  }
+
+  /**
+   * Self-signup wizard entry point. Creates Company + User + RoleAssignment
+   * (`company_owner`) + an audit row in a single bypass-RLS tx, then mints the
+   * usual access+refresh pair so the client can drop straight into `/c/:slug`.
+   *
+   * Why bypass-RLS:
+   *   - the company row doesn't exist yet, so there's no `app.company_id` to
+   *     scope to. The tx is narrow (4 INSERTs against known tables) and the
+   *     resulting `companyId` is stamped into the JWT claims so EVERY follow-up
+   *     request immediately falls back under RLS scope.
+   *
+   * Validation order is "cheap first":
+   *   1. Slug shape + reserved (no DB hit) → 400 BadRequest
+   *   2. Slug uniqueness check (1 read) → 409 SlugTaken
+   *   3. Hash password (~60ms CPU)
+   *   4. Tx: insert Company → User → RoleAssignment → AuditLog
+   *      The `(companyId, email)` unique constraint on User is impossible to
+   *      hit here (brand new company), but we still catch P2002 defensively.
+   *   5. Issue tokens.
+   *
+   * Audit posture: write the audit row INSIDE the tx so signup + audit either
+   * both land or both roll back. AuditLogInterceptor skips public endpoints,
+   * so we own the write here.
+   *
+   * Email lowercased before persisting. `acceptTerms` is enforced by Zod
+   * (literal-true), so the service can assume `input.acceptTerms === true`.
+   */
+  async signup(input: SignupInput): Promise<SignupResponse> {
+    // Step 1 — slug shape + reserved-word check (no DB hit).
+    const slugCheck = validateSlug(input.slug);
+    if (!slugCheck.ok) {
+      throw new BadRequestException({
+        error: 'InvalidSlug',
+        reason: slugCheck.error,
+        message: this.slugReasonToMessage(slugCheck.error),
+      });
+    }
+    const slug = slugCheck.value;
+    const email = input.ownerEmail.toLowerCase();
+
+    // Step 2 — uniqueness check before doing the expensive Argon2 hash. Saves
+    // ~60ms on the dupe-slug path (common during signup retries).
+    const existing = await withTenant({ companyId: '', bypassRls: true }, () =>
+      prisma.company.findUnique({ where: { slug }, select: { id: true } }),
+    );
+    if (existing) {
+      throw new ConflictException({ error: 'SlugTaken', message: `Slug "${slug}" is taken` });
+    }
+
+    // Step 3 — hash password (CPU heavy, do it OUTSIDE the tx so we don't hold
+    // a connection while Argon2 runs).
+    const passwordHash = await hashPassword(input.ownerPassword);
+
+    // Step 4 — single tx that creates the company graph. P2002 here would
+    // indicate a race between the dupe-check above and the INSERT; we rethrow
+    // as 409 so the client sees a consistent error.
+    const trialEndsAt = new Date(Date.now() + AuthService.TRIAL_DAYS * 24 * 60 * 60 * 1000);
+    let created: { companyId: string; userId: string };
+    try {
+      created = await withTenant({ companyId: '', bypassRls: true }, async () => {
+        const company = await prisma.company.create({
+          data: {
+            slug,
+            name: input.companyName.trim(),
+            // status defaults to 'active' via Prisma. trialEndsAt + plan are
+            // SAAS-001..003 placeholders — backend doesn't gate on them yet.
+            trialEndsAt,
+            plan: 'free',
+          },
+          select: { id: true },
+        });
+
+        const user = await prisma.user.create({
+          data: {
+            companyId: company.id,
+            email,
+            passwordHash,
+            displayName: input.ownerDisplayName.trim(),
+            // emailVerifiedAt left null — Phase 1 will add the magic-link flow
+            // that backfills this column via /auth/verify-email.
+          },
+          select: { id: true },
+        });
+
+        await prisma.roleAssignment.create({
+          data: {
+            companyId: company.id,
+            userId: user.id,
+            role: 'company_owner',
+          },
+        });
+
+        // In-tx audit row. Public endpoint → AuditLogInterceptor skips it, so
+        // we write directly. Falls back atomically with the rest of the tx.
+        //
+        // `actorUserId` is intentionally null — at the moment of signup the
+        // "actor" is anonymous public, not a logged-in user. Stamping it with
+        // `user.id` would also tie our hands later: AuditLog.actor relation
+        // is `onDelete: SetNull` (UPDATE), but the audit_log table has an
+        // append-only trigger blocking UPDATE — so a non-null actorUserId
+        // would prevent ever deleting the user. We keep userId in metadata
+        // instead (still queryable, doesn't trigger an FK update on delete).
+        await prisma.auditLog.create({
+          data: {
+            companyId: company.id,
+            actorUserId: null,
+            action: 'signup.success',
+            resource: 'company',
+            resourceId: company.id,
+            metadata: {
+              slug,
+              plan: 'free',
+              trialDays: AuthService.TRIAL_DAYS,
+              userId: user.id,
+              ownerEmail: email,
+            },
+          },
+        });
+
+        return { companyId: company.id, userId: user.id };
+      });
+    } catch (err) {
+      // Race-condition fallback: the dupe-slug check passed but a parallel
+      // signup beat us to the INSERT. Surface as 409 same as Step 2.
+      if (this.isUniqueConstraintError(err, 'company_slug_key')) {
+        throw new ConflictException({
+          error: 'SlugTaken',
+          message: `Slug "${slug}" is taken`,
+        });
+      }
+      throw err;
+    }
+
+    // Step 5 — issue tokens. Fresh owner gets exactly one role: company_owner.
+    const tokens = await this.issueTokens({
+      sub: created.userId,
+      companyId: created.companyId,
+      companySlug: slug,
+      email,
+      roles: ['company_owner'],
+    });
+
+    return {
+      ...tokens,
+      companyId: created.companyId,
+      companySlug: slug,
+    };
+  }
+
+  /** UX-friendly Thai message for each `validateSlug` failure mode. */
+  private slugReasonToMessage(
+    reason: 'too_short' | 'too_long' | 'invalid_chars' | 'reserved',
+  ): string {
+    switch (reason) {
+      case 'too_short':
+        return 'Slug ต้องยาวอย่างน้อย 2 ตัวอักษร';
+      case 'too_long':
+        return 'Slug ยาวเกิน 64 ตัวอักษร';
+      case 'invalid_chars':
+        return 'Slug ใช้ได้เฉพาะตัวพิมพ์เล็ก / ตัวเลข / ขีดกลาง — ห้ามขึ้นต้นหรือลงท้ายด้วยขีดกลาง';
+      case 'reserved':
+        return 'Slug นี้สงวนไว้สำหรับระบบ — กรุณาเลือกชื่ออื่น';
+    }
+  }
+
+  /**
+   * Detect Prisma's `P2002` unique-constraint error scoped to a specific
+   * index. Mirrors `isUniqueConstraintError` in property.service.ts but kept
+   * local to keep the auth module self-contained.
+   */
+  private isUniqueConstraintError(err: unknown, indexFragment: string): boolean {
+    if (!err || typeof err !== 'object') return false;
+    const e = err as { code?: string; meta?: { target?: unknown } };
+    if (e.code !== 'P2002') return false;
+    const target = e.meta?.target;
+    if (Array.isArray(target)) {
+      return target.some((t) => String(t).includes(indexFragment));
+    }
+    return typeof target === 'string' && target.includes(indexFragment);
   }
 
   // -----------------------------------------------------------------------

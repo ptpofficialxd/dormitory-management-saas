@@ -1,15 +1,21 @@
 import {
   type AdminJwtClaims,
   type AuthTokens,
+  type CheckSlugInput,
+  type CheckSlugResponse,
   type LoginAdminInput,
   type RefreshTokenInput,
+  type SignupInput,
+  type SignupResponse,
+  checkSlugInputSchema,
   loginAdminInputSchema,
   refreshTokenInputSchema,
+  signupInputSchema,
 } from '@dorm/shared/zod';
-import { Controller, HttpCode, Post } from '@nestjs/common';
+import { Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { Public } from '../../common/decorators/public.decorator.js';
-import { ZodBody } from '../../common/decorators/zod-body.decorator.js';
+import { ZodBody, ZodQuery } from '../../common/decorators/zod-body.decorator.js';
 import { AuthService } from './auth.service.js';
 
 /**
@@ -43,5 +49,42 @@ export class AuthController {
   @HttpCode(204)
   async logout(@CurrentUser() user: AdminJwtClaims): Promise<void> {
     await this.authService.logout(user);
+  }
+
+  // -----------------------------------------------------------------------
+  // AUTH-004 self-signup (Tasks #113, #115)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Create a fresh company + owner account in one call. Returns the standard
+   * AuthTokens envelope plus the new companyId/slug so the client can redirect
+   * to `/c/:slug/welcome` without decoding the JWT.
+   *
+   * Public + rate-limited (Task #115). Errors:
+   *   400 InvalidSlug    — shape or reserved-word violation
+   *   409 SlugTaken      — race-safe duplicate-slug detection
+   *   503                — JWT signing failure (misconfiguration)
+   */
+  @Post('signup')
+  @HttpCode(200)
+  @Public()
+  signup(@ZodBody(signupInputSchema) body: SignupInput): Promise<SignupResponse> {
+    return this.authService.signup(body);
+  }
+
+  /**
+   * Slug availability probe used by the signup form for instant feedback as
+   * the admin types. PUBLIC + rate-limited (Task #115).
+   *
+   * Returns 200 with a discriminated union — never 4xx for "unavailable".
+   * The empty/long-string Zod failures (400) are the only client-input
+   * mistakes the endpoint will reject outright; everything else (uppercase,
+   * reserved word, taken) comes back as `{ available: false, reason }`.
+   */
+  @Get('check-slug')
+  @HttpCode(200)
+  @Public()
+  checkSlug(@ZodQuery(checkSlugInputSchema) query: CheckSlugInput): Promise<CheckSlugResponse> {
+    return this.authService.checkSlugAvailability(query.slug);
   }
 }
