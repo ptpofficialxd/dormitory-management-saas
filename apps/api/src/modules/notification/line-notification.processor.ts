@@ -6,11 +6,15 @@ import { QUEUE_NAMES } from '../../common/queue/queue-names.js';
 import { CompanyLineChannelService } from '../line/company-line-channel.service.js';
 import { LineMessagingClient, LineMessagingPermanentError } from '../line/line-messaging.client.js';
 import {
+  renderAnnouncement,
   renderInvoiceIssued,
   renderPaymentApproved,
   renderPaymentRejected,
 } from './notification-templates.js';
-import type { LineNotificationJobData } from './notification.types.js';
+import type {
+  LineNotificationAnnouncement,
+  LineNotificationJobData,
+} from './notification.types.js';
 
 /**
  * BullMQ worker for the `line-notification` queue (Task #83).
@@ -79,28 +83,35 @@ export class LineNotificationProcessor extends WorkerHost {
 
     if (!tenant) {
       this.logger.warn(
-        `notification ${data.kind} skipped — tenant=${data.tenantId} not found in company=${data.companyId} (likely deleted)`,
+        `notification ${data.kind} skipped — tenant=${data.tenantId} not found in company=${data.companyId} (likely deleted) [${describeResource(data)}]`,
       );
+      await this.recordAnnouncementOutcome(data, 'failed');
       return { ok: true, skipped: 'tenant-missing' };
     }
 
     if (!tenant.lineUserId) {
       // Most common skip reason: admin created the tenant + issued an
       // invoice before the human ever opened the LIFF app to bind. No
-      // recipient = no push. Soft-skip.
+      // recipient = no push. Soft-skip on the queue side; for
+      // announcement broadcasts we still count this as a failed delivery
+      // so the admin's "delivered/failed" UI matches recipient reality.
       this.logger.debug(
-        `notification ${data.kind} skipped — tenant=${data.tenantId} has no lineUserId (not bound yet)`,
+        `notification ${data.kind} skipped — tenant=${data.tenantId} has no lineUserId (not bound yet) [${describeResource(data)}]`,
       );
+      await this.recordAnnouncementOutcome(data, 'failed');
       return { ok: true, skipped: 'unbound-tenant' };
     }
 
     // Optional defensive check: don't push to retired tenants. Prevents
     // a "your bill is ready" message landing in the chat of someone who
-    // moved out two months ago + has the OA still added.
+    // moved out two months ago + has the OA still added. The producer
+    // pre-filters for active tenants, but status can change between
+    // enqueue + dispatch — count as failed here.
     if (tenant.status !== 'active') {
       this.logger.debug(
-        `notification ${data.kind} skipped — tenant=${data.tenantId} status=${tenant.status} (only push to active tenants)`,
+        `notification ${data.kind} skipped — tenant=${data.tenantId} status=${tenant.status} (only push to active tenants) [${describeResource(data)}]`,
       );
+      await this.recordAnnouncementOutcome(data, 'failed');
       return { ok: true, skipped: 'tenant-inactive' };
     }
 
@@ -108,8 +119,9 @@ export class LineNotificationProcessor extends WorkerHost {
     const channel = await this.channelService.findByCompanyIdUnscoped(data.companyId);
     if (!channel) {
       this.logger.warn(
-        `notification ${data.kind} skipped — company=${data.companyId} has no LINE channel configured`,
+        `notification ${data.kind} skipped — company=${data.companyId} has no LINE channel configured [${describeResource(data)}]`,
       );
+      await this.recordAnnouncementOutcome(data, 'failed');
       return { ok: true, skipped: 'channel-missing' };
     }
 
@@ -125,21 +137,94 @@ export class LineNotificationProcessor extends WorkerHost {
         accessToken: channel.channelAccessToken,
       });
       this.logger.debug(
-        `notification ${data.kind} pushed tenant=${data.tenantId} invoice=${data.invoiceId}`,
+        `notification ${data.kind} pushed tenant=${data.tenantId} [${describeResource(data)}]`,
       );
+      await this.recordAnnouncementOutcome(data, 'delivered');
       return { ok: true };
     } catch (err) {
       if (err instanceof LineMessagingPermanentError) {
         // 4xx from LINE — most often: tenant blocked the OA, access token
         // revoked, or message validation failed. Retrying won't help.
         this.logger.warn(
-          `notification ${data.kind} permanent-rejected by LINE (status=${err.status}) tenant=${data.tenantId} invoice=${data.invoiceId}: ${err.body}`,
+          `notification ${data.kind} permanent-rejected by LINE (status=${err.status}) tenant=${data.tenantId} [${describeResource(data)}]: ${err.body}`,
         );
+        await this.recordAnnouncementOutcome(data, 'failed');
         return { ok: true, skipped: 'line-permanent-error' };
       }
-      // Transient — let BullMQ retry per default backoff.
+      // Transient — let BullMQ retry per default backoff. The terminal
+      // outcome (after all retries exhaust) is captured by `onFailed`
+      // which calls `recordAnnouncementOutcome(data, 'failed')` there.
       throw err;
     }
+  }
+
+  /**
+   * For announcement jobs, atomically increment the parent announcement's
+   * `deliveredCount` or `failedCount`, then check if this was the last
+   * recipient. If yes, flip `status` from `sending` to `sent` (any
+   * deliveries happened) or `failed` (zero deliveries). For other kinds,
+   * this is a no-op.
+   *
+   * Race safety:
+   *   - Each worker increments via Prisma's `{ increment: 1 }` operator
+   *     which compiles to `UPDATE ... SET col = col + 1` — atomic at the
+   *     row level, no read-modify-write window.
+   *   - Terminal flip uses a conditional `WHERE status = 'sending'` so
+   *     the second worker that crosses the threshold is a no-op (Prisma
+   *     returns count=0 silently).
+   *
+   * Failure mode: if Redis publishes the message but the DB write fails
+   * (transient PG hiccup), the announcement might stay at `sending`
+   * forever with under-counted stats. Phase 1 wishlist: a sweep job that
+   * scans for stale `sending` rows + reconciles from queue history. For
+   * MVP, admin can manually re-broadcast (different Idempotency-Key) if
+   * stuck.
+   */
+  private async recordAnnouncementOutcome(
+    data: LineNotificationJobData,
+    outcome: 'delivered' | 'failed',
+  ): Promise<void> {
+    if (data.kind !== 'announcement') return;
+    try {
+      await this.bumpAnnouncementCounter(data, outcome);
+    } catch (err) {
+      // We've already logged + the push side-effect (or skip) is
+      // committed. Counter drift is annoying but not corrupting — log
+      // loud + keep moving.
+      this.logger.error(
+        `failed to ${outcome === 'delivered' ? 'increment delivered' : 'increment failed'} on announcement=${data.announcementId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async bumpAnnouncementCounter(
+    data: LineNotificationAnnouncement,
+    outcome: 'delivered' | 'failed',
+  ): Promise<void> {
+    await withTenant({ companyId: data.companyId }, async () => {
+      const updated = await prisma.announcement.update({
+        where: { id: data.announcementId },
+        data:
+          outcome === 'delivered'
+            ? { deliveredCount: { increment: 1 } }
+            : { failedCount: { increment: 1 } },
+        select: { deliveredCount: true, failedCount: true },
+      });
+
+      const accounted = updated.deliveredCount + updated.failedCount;
+      if (accounted < data.totalRecipients) {
+        return; // not the last worker; stay 'sending'
+      }
+
+      // Terminal: flip status. Conditional `where: { status: 'sending' }`
+      // makes the second-finisher a silent no-op (updateMany returns
+      // count=0 instead of throwing).
+      const terminalStatus: 'sent' | 'failed' = updated.deliveredCount > 0 ? 'sent' : 'failed';
+      await prisma.announcement.updateMany({
+        where: { id: data.announcementId, status: 'sending' },
+        data: { status: terminalStatus, sentAt: new Date() },
+      });
+    });
   }
 
   /**
@@ -163,13 +248,26 @@ export class LineNotificationProcessor extends WorkerHost {
 
     if (!exhausted) {
       this.logger.warn(
-        `notification ${job.data.kind} attempt ${attemptsMade}/${maxAttempts} failed tenant=${job.data.tenantId} invoice=${job.data.invoiceId}: ${err.message}`,
+        `notification ${job.data.kind} attempt ${attemptsMade}/${maxAttempts} failed tenant=${job.data.tenantId} [${describeResource(job.data)}]: ${err.message}`,
       );
       return;
     }
     this.logger.error(
-      `notification ${job.data.kind} TERMINAL after ${attemptsMade} attempts tenant=${job.data.tenantId} invoice=${job.data.invoiceId}: ${err.message}`,
+      `notification ${job.data.kind} TERMINAL after ${attemptsMade} attempts tenant=${job.data.tenantId} [${describeResource(job.data)}]: ${err.message}`,
     );
+
+    // Announcement-only: the terminal-failed retry counts toward
+    // failedCount so the admin sees an accurate "X delivered / Y failed"
+    // even when delivery never connected (transient errors that exhausted
+    // every retry). We can't `await` here (the @OnWorkerEvent listener is
+    // sync per BullMQ contract), so fire-and-forget with .catch.
+    if (job.data.kind === 'announcement') {
+      this.recordAnnouncementOutcome(job.data, 'failed').catch((bumpErr) => {
+        this.logger.error(
+          `failed to bump announcement=${(job.data as LineNotificationAnnouncement).announcementId} failedCount in onFailed listener: ${(bumpErr as Error).message}`,
+        );
+      });
+    }
   }
 }
 
@@ -189,9 +287,23 @@ function renderText(data: LineNotificationJobData): string {
       return renderPaymentApproved(data);
     case 'payment_rejected':
       return renderPaymentRejected(data);
+    case 'announcement':
+      return renderAnnouncement(data);
     default:
       return assertNever(data);
   }
+}
+
+/**
+ * Render a human-readable resource identifier for log lines. invoice +
+ * payment kinds get `invoice=<id>`; announcement gets `announcement=<id>`.
+ * Centralised so the whole worker speaks the same log vocabulary.
+ */
+function describeResource(data: LineNotificationJobData): string {
+  if (data.kind === 'announcement') {
+    return `announcement=${data.announcementId}`;
+  }
+  return `invoice=${data.invoiceId}`;
 }
 
 function assertNever(x: never): never {

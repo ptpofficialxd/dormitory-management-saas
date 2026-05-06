@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { Queue } from 'bullmq';
 import { QUEUE_NAMES } from '../../common/queue/queue-names.js';
 import {
+  type LineNotificationAnnouncement,
   type LineNotificationInvoiceIssued,
   type LineNotificationJobData,
   type LineNotificationPaymentApproved,
@@ -82,6 +83,61 @@ export class NotificationService {
   }
 
   /**
+   * Fan-out broadcast for COM-003. Caller (AnnouncementService.create)
+   * pre-resolves the recipient list (active tenants in company with
+   * `lineUserId` bound) and passes it in via `tenantIds`. We enqueue ONE
+   * job per recipient — the worker handles per-tenant delivery + atomic
+   * counter increments on the parent announcement.
+   *
+   * Why fan-out (vs LINE multicast which accepts up to 500 userIds/call):
+   *   - Per-tenant retry isolation: a single 4xx from one userId blocking
+   *     the whole batch would over-mark deliveredCount as failed
+   *   - Per-tenant accounting: deliveredCount/failedCount are accurate to
+   *     the recipient, not the batch
+   *   - LINE multicast is a perf optimisation we can layer in later (Phase
+   *     2) once we have a dorm large enough to feel the per-call overhead
+   *
+   * `totalRecipients` is snapshotted into every job's payload so each
+   * worker can independently detect "I just processed the last one" via
+   * an atomic compare-and-flip — no separate finalizer job needed.
+   *
+   * Returns void, swallows enqueue failures (same contract as the other
+   * methods — caller's HTTP request stays green even if Redis hiccups; the
+   * announcement row stays at status='sending' and an admin can retry by
+   * re-POSTing with a fresh Idempotency-Key).
+   */
+  async enqueueAnnouncementBroadcast(args: {
+    announcementId: string;
+    companyId: string;
+    companySlug: string;
+    title: string;
+    body: string;
+    tenantIds: readonly string[];
+  }): Promise<void> {
+    const totalRecipients = args.tenantIds.length;
+    if (totalRecipients === 0) {
+      this.logger.warn(
+        `enqueueAnnouncementBroadcast called with 0 recipients for announcement=${args.announcementId} — caller should have rejected upstream`,
+      );
+      return;
+    }
+    await Promise.all(
+      args.tenantIds.map((tenantId) =>
+        this.enqueue({
+          kind: 'announcement',
+          companyId: args.companyId,
+          companySlug: args.companySlug,
+          tenantId,
+          announcementId: args.announcementId,
+          title: args.title,
+          body: args.body,
+          totalRecipients,
+        }),
+      ),
+    );
+  }
+
+  /**
    * Single internal entrypoint — every public method funnels through here.
    *
    * BullMQ jobId comes from the (kind, tenant, invoice) triple so that
@@ -91,19 +147,21 @@ export class NotificationService {
    * Errors are caught and logged — see class JSDoc for the rationale.
    */
   private async enqueue(payload: LineNotificationJobData): Promise<void> {
-    const jobId = buildNotificationJobId({
-      kind: payload.kind,
-      tenantId: payload.tenantId,
-      invoiceId: payload.invoiceId,
-    });
+    const jobId = buildNotificationJobId(payload);
     try {
       await this.queue.add(payload.kind, payload, { jobId });
     } catch (err) {
       // Producer-side failure (Redis down, queue closed, etc). The HTTP
       // request that triggered this still succeeded — log + move on.
+      const resourceId =
+        payload.kind === 'announcement' ? payload.announcementId : payload.invoiceId;
       this.logger.error(
-        `Failed to enqueue ${payload.kind} for tenant=${payload.tenantId} invoice=${payload.invoiceId}: ${(err as Error).message}`,
+        `Failed to enqueue ${payload.kind} for tenant=${payload.tenantId} resource=${resourceId}: ${(err as Error).message}`,
       );
     }
   }
 }
+
+// Re-export for AnnouncementService import ergonomics — keeps consumers from
+// reaching into ./notification.types.js directly.
+export type { LineNotificationAnnouncement };

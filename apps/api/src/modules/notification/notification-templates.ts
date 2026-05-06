@@ -1,5 +1,6 @@
 import { env } from '../../config/env.js';
 import type {
+  LineNotificationAnnouncement,
   LineNotificationInvoiceIssued,
   LineNotificationPaymentApproved,
   LineNotificationPaymentRejected,
@@ -136,6 +137,24 @@ export function renderPaymentRejected(args: LineNotificationPaymentRejected): st
     'กรุณาส่งสลิปใหม่:',
     url,
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Template: ANNOUNCEMENT
+// ---------------------------------------------------------------------------
+//
+// Format: title on its own line as a header, then a blank line, then the
+// admin-authored body verbatim. No deep-link in v1 — the LIFF announcement
+// history page is deferred to Phase 1; the LINE chat itself IS the history
+// for now (tenant scrolls back to re-read).
+//
+// Body is rendered as-is — admin owns the message. We trust the input
+// (RBAC restricts compose to owner + manager) and the Zod layer caps body
+// at 4000 chars (well under LINE's 5000 single-message limit, leaving
+// headroom for the title prefix + newlines).
+
+export function renderAnnouncement(args: LineNotificationAnnouncement): string {
+  return [`📢 ${args.title}`, '', args.body].join('\n');
 }
 
 // Re-export helpers for unit testing — kept un-exported in the public surface
