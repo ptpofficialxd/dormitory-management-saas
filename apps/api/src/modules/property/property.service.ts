@@ -12,6 +12,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type CursorPage, buildCursorPage, decodeCursor } from '../../common/util/cursor.util.js';
+import { softWarnPlanLimit } from '../../common/util/plan-limit.util.js';
 
 /**
  * Property = a building/site owned by a company. Manager-only mutations; any
@@ -88,6 +89,19 @@ export class PropertyService {
           address: input.address ?? null,
         },
       });
+
+      // Plan-limit soft warn (Task #122). Fire-and-forget — count after the
+      // create so the new row is included; helper emits a dedup'd
+      // `plan.limit_exceeded` audit row when `count > limits.properties`.
+      const propertyCount = await prisma.property.count({
+        where: { companyId: ctx.companyId },
+      });
+      void softWarnPlanLimit({
+        companyId: ctx.companyId,
+        resource: 'properties',
+        count: propertyCount,
+      });
+
       return row as unknown as Property;
     } catch (err) {
       if (isUniqueConstraintError(err, 'companyId_slug')) {

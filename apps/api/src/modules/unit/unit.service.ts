@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { type CursorPage, buildCursorPage, decodeCursor } from '../../common/util/cursor.util.js';
+import { softWarnPlanLimit } from '../../common/util/plan-limit.util.js';
 
 /**
  * Unit (room) lifecycle. RLS handles cross-tenant isolation transparently;
@@ -98,6 +99,20 @@ export class UnitService {
           notes: input.notes ?? null,
         },
       });
+
+      // Plan-limit soft warn (Task #122). Fire-and-forget — we count AFTER
+      // the create so the new row is included; helper emits a dedup'd
+      // `plan.limit_exceeded` audit row if `count > getPlanLimits(plan).units`.
+      // v1 is warn-only; Phase 1 (SAAS-004) swaps for hard 402.
+      const unitCount = await prisma.unit.count({
+        where: { companyId: ctx.companyId },
+      });
+      void softWarnPlanLimit({
+        companyId: ctx.companyId,
+        resource: 'units',
+        count: unitCount,
+      });
+
       return row as unknown as Unit;
     } catch (err) {
       if (isUniqueConstraintError(err, 'unitNumber')) {

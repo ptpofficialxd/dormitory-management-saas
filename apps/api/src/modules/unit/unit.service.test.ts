@@ -19,6 +19,7 @@ const mockUnitFindMany = vi.fn();
 const mockUnitFindUnique = vi.fn();
 const mockUnitCreate = vi.fn();
 const mockUnitUpdate = vi.fn();
+const mockUnitCount = vi.fn();
 const mockPropertyFindUnique = vi.fn();
 const mockGetTenantContext = vi.fn();
 
@@ -29,6 +30,7 @@ vi.mock('@dorm/db', () => ({
       findUnique: mockUnitFindUnique,
       create: mockUnitCreate,
       update: mockUnitUpdate,
+      count: mockUnitCount,
     },
     property: {
       findUnique: mockPropertyFindUnique,
@@ -37,6 +39,13 @@ vi.mock('@dorm/db', () => ({
   getTenantContext: mockGetTenantContext,
   // Prisma namespace export — tests don't actually use the types at runtime.
   Prisma: {},
+}));
+
+// Stub the soft-warn helper so create() tests don't need to mock the
+// company.plan + audit_log dependencies it pulls in (Task #122). The
+// helper's own logic is exercised separately.
+vi.mock('../../common/util/plan-limit.util.js', () => ({
+  softWarnPlanLimit: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { UnitService } = await import('./unit.service.js');
@@ -54,6 +63,9 @@ describe('UnitService', () => {
     mockUnitFindUnique.mockReset();
     mockUnitCreate.mockReset();
     mockUnitUpdate.mockReset();
+    mockUnitCount.mockReset();
+    // Default count = 0 so soft-warn never trips during create-success tests.
+    mockUnitCount.mockResolvedValue(0);
     mockPropertyFindUnique.mockReset();
     mockGetTenantContext.mockReset();
     mockGetTenantContext.mockReturnValue({ companyId: COMPANY_ID });

@@ -16,6 +16,7 @@ const mockFindMany = vi.fn();
 const mockFindUnique = vi.fn();
 const mockCreate = vi.fn();
 const mockUpdate = vi.fn();
+const mockCount = vi.fn();
 const mockGetTenantContext = vi.fn();
 
 vi.mock('@dorm/db', () => ({
@@ -25,9 +26,17 @@ vi.mock('@dorm/db', () => ({
       findUnique: mockFindUnique,
       create: mockCreate,
       update: mockUpdate,
+      count: mockCount,
     },
   },
   getTenantContext: mockGetTenantContext,
+}));
+
+// Stub the soft-warn helper so create() tests don't need to mock the
+// company.plan + audit_log dependencies it pulls in (Task #122). The
+// helper's own logic is exercised separately.
+vi.mock('../../common/util/plan-limit.util.js', () => ({
+  softWarnPlanLimit: vi.fn().mockResolvedValue(undefined),
 }));
 
 const { PropertyService } = await import('./property.service.js');
@@ -43,6 +52,9 @@ describe('PropertyService', () => {
     mockFindUnique.mockReset();
     mockCreate.mockReset();
     mockUpdate.mockReset();
+    mockCount.mockReset();
+    // Default count = 0 so soft-warn never trips during create-success tests.
+    mockCount.mockResolvedValue(0);
     mockGetTenantContext.mockReset();
     mockGetTenantContext.mockReturnValue({ companyId: COMPANY_ID });
     service = new PropertyService();
