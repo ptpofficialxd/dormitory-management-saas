@@ -4,6 +4,8 @@ import {
   announcementStatusSchema,
   auditLogSchema,
   batchGenerateInvoicesInputSchema,
+  checkSlugInputSchema,
+  checkSlugResponseSchema,
   companyStatusSchema,
   contractStatusSchema,
   createAnnouncementInputSchema,
@@ -41,11 +43,14 @@ import {
   promptPayNameSchema,
   rateSchema,
   rejectPaymentInputSchema,
+  signupInputSchema,
+  signupResponseSchema,
   slipMimeTypeSchema,
   slipUploadUrlInputSchema,
   slipUploadUrlResponseSchema,
   slipViewUrlResponseSchema,
   slugSchema,
+  slugUnavailableReasonSchema,
   tenantStatusSchema,
   unitStatusSchema,
   updateMaintenanceRequestInputSchema,
@@ -897,6 +902,148 @@ describe('loginLiffInputSchema', () => {
     expect(loginLiffInputSchema.safeParse({ companySlug: 'acme', idToken: '' }).success).toBe(
       false,
     );
+  });
+});
+
+// =========================================================================
+// AUTH-004 — signup + check-slug (Task #112)
+// =========================================================================
+
+describe('signupInputSchema', () => {
+  const valid = {
+    companyName: 'Acme Dormitory',
+    slug: 'acme-dorm',
+    ownerEmail: 'owner@acme.co',
+    ownerPassword: 'correct-horse-battery',
+    ownerDisplayName: 'Acme Owner',
+    acceptTerms: true as const,
+  };
+
+  it('accepts a fully-valid signup payload', () => {
+    expect(signupInputSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects when acceptTerms is false (literal-true guard)', () => {
+    expect(signupInputSchema.safeParse({ ...valid, acceptTerms: false }).success).toBe(false);
+  });
+
+  it('rejects when acceptTerms is missing', () => {
+    const { acceptTerms: _omit, ...rest } = valid;
+    expect(signupInputSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects password shorter than 8 chars', () => {
+    expect(signupInputSchema.safeParse({ ...valid, ownerPassword: 'short' }).success).toBe(false);
+  });
+
+  it('rejects password longer than 128 chars', () => {
+    expect(signupInputSchema.safeParse({ ...valid, ownerPassword: 'a'.repeat(129) }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects malformed email', () => {
+    expect(signupInputSchema.safeParse({ ...valid, ownerEmail: 'not-an-email' }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects empty companyName', () => {
+    expect(signupInputSchema.safeParse({ ...valid, companyName: '' }).success).toBe(false);
+  });
+
+  it('rejects companyName longer than 128 chars', () => {
+    expect(signupInputSchema.safeParse({ ...valid, companyName: 'a'.repeat(129) }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects empty displayName', () => {
+    expect(signupInputSchema.safeParse({ ...valid, ownerDisplayName: '' }).success).toBe(false);
+  });
+
+  it('defers slug shape errors to slugSchema (uppercase rejected)', () => {
+    expect(signupInputSchema.safeParse({ ...valid, slug: 'Acme' }).success).toBe(false);
+  });
+
+  it('does NOT enforce reserved slugs at the Zod layer (service does that)', () => {
+    // 'admin' passes the SHAPE check — reserved-word enforcement is a runtime
+    // concern (service / check-slug endpoint). Keeps Zod focused on shape.
+    expect(signupInputSchema.safeParse({ ...valid, slug: 'admin' }).success).toBe(true);
+  });
+});
+
+describe('signupResponseSchema', () => {
+  it('accepts an envelope with tokens + companyId/slug', () => {
+    const result = signupResponseSchema.safeParse({
+      accessToken: 'a'.repeat(32),
+      refreshToken: 'r'.repeat(32),
+      accessTokenExpiresAt: 1893456000,
+      companyId: UUID_A,
+      companySlug: 'acme-dorm',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects when companySlug is missing', () => {
+    expect(
+      signupResponseSchema.safeParse({
+        accessToken: 'a'.repeat(32),
+        refreshToken: 'r'.repeat(32),
+        accessTokenExpiresAt: 1893456000,
+        companyId: UUID_A,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('checkSlugInputSchema', () => {
+  it('accepts any non-empty short string (lets service decide reason)', () => {
+    expect(checkSlugInputSchema.safeParse({ slug: 'a' }).success).toBe(true);
+    expect(checkSlugInputSchema.safeParse({ slug: 'Acme!' }).success).toBe(true);
+    expect(checkSlugInputSchema.safeParse({ slug: 'admin' }).success).toBe(true);
+  });
+
+  it('rejects empty string', () => {
+    expect(checkSlugInputSchema.safeParse({ slug: '' }).success).toBe(false);
+  });
+
+  it('rejects strings longer than 64 chars', () => {
+    expect(checkSlugInputSchema.safeParse({ slug: 'a'.repeat(65) }).success).toBe(false);
+  });
+});
+
+describe('checkSlugResponseSchema', () => {
+  it('accepts available=true with no reason', () => {
+    expect(checkSlugResponseSchema.safeParse({ available: true }).success).toBe(true);
+  });
+
+  it('accepts available=false with a known reason', () => {
+    for (const reason of ['too_short', 'too_long', 'invalid_chars', 'reserved', 'taken'] as const) {
+      expect(checkSlugResponseSchema.safeParse({ available: false, reason }).success).toBe(true);
+    }
+  });
+
+  it('rejects available=false without a reason', () => {
+    expect(checkSlugResponseSchema.safeParse({ available: false }).success).toBe(false);
+  });
+
+  it('rejects unknown reason values', () => {
+    expect(checkSlugResponseSchema.safeParse({ available: false, reason: 'nope' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('slugUnavailableReasonSchema (drift canary)', () => {
+  it('matches the expected union of 5 reasons', () => {
+    expect(slugUnavailableReasonSchema.options).toEqual([
+      'too_short',
+      'too_long',
+      'invalid_chars',
+      'reserved',
+      'taken',
+    ]);
   });
 });
 

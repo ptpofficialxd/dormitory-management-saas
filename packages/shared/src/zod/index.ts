@@ -5,6 +5,7 @@
  */
 export * from './primitives.js';
 export * from './auth.js';
+export * from './signup.js';
 export * from './company.js';
 export * from './user.js';
 export * from './property.js';
