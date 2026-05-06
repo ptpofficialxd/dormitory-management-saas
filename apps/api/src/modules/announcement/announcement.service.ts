@@ -162,8 +162,27 @@ export class AnnouncementService {
       });
     }
 
-    // 3. Resolve recipients — active tenants with a bound LINE userId.
+    // 3. Pre-check: company must have a LINE OA channel configured. Without
+    //    one, every push job would soft-skip with channel-missing and the
+    //    announcement would land at status='failed' without telling the
+    //    admin why. Fail upfront with an actionable error so the admin
+    //    knows to go set up LINE in Settings first.
+    const channel = await prisma.companyLineChannel.findFirst({
+      select: { id: true },
+    });
+    if (!channel) {
+      throw new BadRequestException({
+        error: 'NoLineChannel',
+        message:
+          'หอพักนี้ยังไม่ได้เชื่อม LINE Official Account — กรุณาตั้งค่า LINE OA ในหน้า "ตั้งค่า" ก่อนส่งประกาศ',
+      });
+    }
+
+    // 4. Resolve recipients — active tenants with a bound LINE userId.
     //    RLS scopes the read to the current company automatically.
+    //    Zero recipients = no point creating an announcement row that
+    //    will immediately flip to 'failed' — fail upfront like the
+    //    no-channel case so the admin knows what to fix.
     const recipients = await prisma.tenant.findMany({
       where: {
         status: 'active',
@@ -172,8 +191,14 @@ export class AnnouncementService {
       select: { id: true },
     });
     const tenantIds = recipients.map((r) => r.id);
+    if (tenantIds.length === 0) {
+      throw new BadRequestException({
+        error: 'NoRecipients',
+        message: 'ยังไม่มีผู้เช่าที่ผูกบัญชี LINE — ให้ผู้เช่าเปิดลิงก์ LIFF เพื่อผูกบัญชี LINE ก่อน แล้วค่อยส่งประกาศ',
+      });
+    }
 
-    // 4. Snapshot the slug for the broadcast payload. RLS narrows
+    // 5. Snapshot the slug for the broadcast payload. RLS narrows
     //    `findFirst` on Company to the current tenant — there's exactly
     //    one row visible, so the result is deterministic.
     const company = await prisma.company.findFirst({
@@ -185,11 +210,10 @@ export class AnnouncementService {
       );
     }
 
-    // 5. Create the row. Zero recipients → terminal 'failed' immediately
-    //    so the admin doesn't see a permanently-stuck 'sending' row.
-    const initialStatus = tenantIds.length === 0 ? 'failed' : 'sending';
-    const now = new Date();
-
+    // 6. Create the row. We've already pre-validated channel + recipients
+    //    upstream, so initial status is always 'sending' — the worker can
+    //    still flip individual deliveries to failedCount per LINE response,
+    //    but the row always starts in-flight.
     let created: Awaited<ReturnType<typeof prisma.announcement.create>>;
     try {
       created = await prisma.announcement.create({
@@ -198,9 +222,9 @@ export class AnnouncementService {
           title: input.title,
           body: input.body,
           target: input.target,
-          status: initialStatus,
+          status: 'sending',
           scheduledAt: null,
-          sentAt: tenantIds.length === 0 ? now : null,
+          sentAt: null,
           deliveredCount: 0,
           failedCount: 0,
           createdByUserId: actorUserId,
@@ -218,20 +242,14 @@ export class AnnouncementService {
       }
       throw err;
     }
-
-    // 6. Fan out broadcast jobs. NotificationService swallows enqueue
-    //    failures (logs only) — the announcement row is the source of
-    //    truth either way.
-    if (tenantIds.length > 0) {
-      await this.notification.enqueueAnnouncementBroadcast({
-        announcementId: created.id,
-        companyId: ctx.companyId,
-        companySlug: company.slug,
-        title: input.title,
-        body: input.body,
-        tenantIds,
-      });
-    }
+    await this.notification.enqueueAnnouncementBroadcast({
+      announcementId: created.id,
+      companyId: ctx.companyId,
+      companySlug: company.slug,
+      title: input.title,
+      body: input.body,
+      tenantIds,
+    });
 
     return created as unknown as Announcement;
   }

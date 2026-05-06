@@ -24,6 +24,7 @@ const mockAnnouncementFindMany = vi.fn();
 const mockAnnouncementCreate = vi.fn();
 const mockTenantFindMany = vi.fn();
 const mockCompanyFindFirst = vi.fn();
+const mockCompanyLineChannelFindFirst = vi.fn();
 const mockGetTenantContext = vi.fn();
 
 class MockPrismaClientKnownRequestError extends Error {
@@ -44,6 +45,7 @@ vi.mock('@dorm/db', () => ({
     },
     tenant: { findMany: mockTenantFindMany },
     company: { findFirst: mockCompanyFindFirst },
+    companyLineChannel: { findFirst: mockCompanyLineChannelFindFirst },
   },
   getTenantContext: mockGetTenantContext,
   Prisma: {
@@ -114,6 +116,7 @@ describe('AnnouncementService', () => {
       // First findFirst (pre-check) → null (no existing). After P2002, second
       // findFirst returns the row that won the race.
       mockAnnouncementFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(winnerRow);
+      mockCompanyLineChannelFindFirst.mockResolvedValueOnce({ id: 'channel-id' });
       mockTenantFindMany.mockResolvedValueOnce([{ id: TENANT_ID_A }]);
       mockCompanyFindFirst.mockResolvedValueOnce({ slug: COMPANY_SLUG });
       mockAnnouncementCreate.mockRejectedValueOnce(
@@ -158,9 +161,44 @@ describe('AnnouncementService', () => {
     });
   });
 
-  describe('createBroadcast — recipients + persistence', () => {
-    it('creates with status=sending + enqueues broadcast when recipients exist', async () => {
+  describe('createBroadcast — pre-flight rejections (fail-fast UX)', () => {
+    it('throws BadRequestException when company has no LINE OA channel configured', async () => {
       mockAnnouncementFindFirst.mockResolvedValueOnce(null);
+      mockCompanyLineChannelFindFirst.mockResolvedValueOnce(null); // no channel
+
+      const { service, notification } = makeService();
+
+      await expect(
+        service.createBroadcast(VALID_INPUT, IDEMPOTENCY_KEY, ACTOR_USER_ID),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      // Side-effect proof: didn't even reach the recipient query or create.
+      expect(mockTenantFindMany).not.toHaveBeenCalled();
+      expect(mockAnnouncementCreate).not.toHaveBeenCalled();
+      expect(notification.enqueueAnnouncementBroadcast).not.toHaveBeenCalled();
+    });
+
+    it('throws BadRequestException when no active tenant has LINE bound', async () => {
+      mockAnnouncementFindFirst.mockResolvedValueOnce(null);
+      mockCompanyLineChannelFindFirst.mockResolvedValueOnce({ id: 'channel-id' });
+      mockTenantFindMany.mockResolvedValueOnce([]); // no recipients
+
+      const { service, notification } = makeService();
+
+      await expect(
+        service.createBroadcast(VALID_INPUT, IDEMPOTENCY_KEY, ACTOR_USER_ID),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      // Got past channel check, hit recipient query, bailed before create.
+      expect(mockAnnouncementCreate).not.toHaveBeenCalled();
+      expect(notification.enqueueAnnouncementBroadcast).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createBroadcast — happy path persistence', () => {
+    it('creates with status=sending + enqueues broadcast when channel + recipients OK', async () => {
+      mockAnnouncementFindFirst.mockResolvedValueOnce(null);
+      mockCompanyLineChannelFindFirst.mockResolvedValueOnce({ id: 'channel-id' });
       mockTenantFindMany.mockResolvedValueOnce([{ id: TENANT_ID_A }, { id: TENANT_ID_B }]);
       mockCompanyFindFirst.mockResolvedValueOnce({ slug: COMPANY_SLUG });
       mockAnnouncementCreate.mockResolvedValueOnce({
@@ -174,7 +212,8 @@ describe('AnnouncementService', () => {
 
       expect(result).toMatchObject({ id: ANNOUNCEMENT_ID, status: 'sending' });
 
-      // Verify create payload
+      // Verify create payload — always status='sending' now (fail-fast
+      // upstream means the zero-recipients 'failed' branch is gone).
       const createArgs = mockAnnouncementCreate.mock.calls[0]?.[0];
       expect(createArgs?.data).toMatchObject({
         companyId: COMPANY_ID,
@@ -200,30 +239,10 @@ describe('AnnouncementService', () => {
       });
     });
 
-    it('creates with status=failed + sentAt=now + skips enqueue when zero recipients', async () => {
-      mockAnnouncementFindFirst.mockResolvedValueOnce(null);
-      mockTenantFindMany.mockResolvedValueOnce([]); // no recipients
-      mockCompanyFindFirst.mockResolvedValueOnce({ slug: COMPANY_SLUG });
-      mockAnnouncementCreate.mockResolvedValueOnce({
-        id: ANNOUNCEMENT_ID,
-        status: 'failed',
-      });
-
-      const { service, notification } = makeService();
-      const result = await service.createBroadcast(VALID_INPUT, IDEMPOTENCY_KEY, ACTOR_USER_ID);
-
-      expect(result).toMatchObject({ status: 'failed' });
-
-      const createArgs = mockAnnouncementCreate.mock.calls[0]?.[0];
-      expect(createArgs?.data?.status).toBe('failed');
-      expect(createArgs?.data?.sentAt).toBeInstanceOf(Date);
-
-      expect(notification.enqueueAnnouncementBroadcast).not.toHaveBeenCalled();
-    });
-
     it('queries tenant.findMany with status=active + lineUserId not null', async () => {
       mockAnnouncementFindFirst.mockResolvedValueOnce(null);
-      mockTenantFindMany.mockResolvedValueOnce([]);
+      mockCompanyLineChannelFindFirst.mockResolvedValueOnce({ id: 'channel-id' });
+      mockTenantFindMany.mockResolvedValueOnce([{ id: TENANT_ID_A }]);
       mockCompanyFindFirst.mockResolvedValueOnce({ slug: COMPANY_SLUG });
       mockAnnouncementCreate.mockResolvedValueOnce({ id: ANNOUNCEMENT_ID });
 
